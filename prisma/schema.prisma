@@ -1,15 +1,249 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// prisma/schema.prisma
+// Prisma non supporta nativamente trigger e alcuni vincoli complessi:
+// quelli sono definiti nella migration SQL custom (migrations/001_triggers.sql)
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// PERSONA
+// ─────────────────────────────────────────────
+model Persona {
+  id_persona  Int      @id @default(autoincrement())
+  username    String   @unique @db.VarChar(50)
+  photo_url   String?  @db.VarChar(255)
+  is_banned   Boolean  @default(false)
+  is_superuser Boolean @default(false)
+
+  credenziali     Credenziali?
+  portafogli      Portafoglio[]
+  amicizie_inviate    Amicizia[] @relation("Persona1")
+  amicizie_ricevute   Amicizia[] @relation("Persona2")
+  amicizie_bloccate   Amicizia[] @relation("UserBlock")
+  membri_gruppi   Membro_Gruppo[]
+  inviti_inviati  Invito_Gruppo[] @relation("Mittente")
+  inviti_ricevuti Invito_Gruppo[] @relation("Invitato")
+  watchlist       Watchlist[]
+  storico_portafoglio Storico_Portafoglio[]
+
+  @@map("persona")
+}
+
+// ─────────────────────────────────────────────
+// CREDENZIALI
+// ─────────────────────────────────────────────
+model Credenziali {
+  id_persona Int    @id
+  email      String @unique @db.VarChar(100)
+  password   String @db.VarChar(255)  // bcrypt hash
+
+  persona Persona @relation(fields: [id_persona], references: [id_persona], onDelete: Cascade)
+
+  @@map("credenziali")
+}
+
+// ─────────────────────────────────────────────
+// GRUPPO
+// ─────────────────────────────────────────────
+model Gruppo {
+  id_gruppo Int           @id @default(autoincrement())
+  nome      String        @unique @db.VarChar(100)
+  privacy   GruppoPrivacy
+  photo_url String?       @db.VarChar(255)
+
+  portafogli      Portafoglio[]
+  membri          Membro_Gruppo[]
+  inviti          Invito_Gruppo[]
+  storico_portafoglio Storico_Portafoglio[]
+
+  @@map("gruppo")
+}
+
+// ─────────────────────────────────────────────
+// STOCK
+// ─────────────────────────────────────────────
+model Stock {
+  id_stock      String @id @db.VarChar(10)  // es. 'AAPL'
+  nome_societa  String @db.VarChar(150)
+  settore       String @db.VarChar(50)
+
+  transazioni     Transazione[]
+  watchlist       Watchlist[]
+  azioni_possedute Azioni_in_possesso[]
+
+  @@map("stock")
+}
+
+// ─────────────────────────────────────────────
+// PORTAFOGLIO
+// ─────────────────────────────────────────────
+model Portafoglio {
+  id_portafoglio Int      @id @default(autoincrement())
+  liquidita      Decimal  @default(0) @db.Decimal(18, 2)
+  id_persona     Int
+  id_gruppo      Int?     // null = portafoglio personale
+
+  persona    Persona  @relation(fields: [id_persona], references: [id_persona], onDelete: Cascade)
+  gruppo     Gruppo?  @relation(fields: [id_gruppo], references: [id_gruppo], onDelete: Cascade)
+
+  transazioni      Transazione[]
+  azioni_possedute Azioni_in_possesso[]
+
+  // Un utente ha al massimo 1 portafoglio personale e 1 per gruppo
+  @@unique([id_persona, id_gruppo])
+  @@map("portafoglio")
+}
+
+// ─────────────────────────────────────────────
+// STORICO PORTAFOGLIO
+// ─────────────────────────────────────────────
+model Storico_Portafoglio {
+  id_snapshot  Int      @id @default(autoincrement())
+  data         DateTime @db.Date
+  valore_totale Decimal @db.Decimal(18, 2)
+  id_persona   Int
+  id_gruppo    Int?
+
+  persona Persona  @relation(fields: [id_persona], references: [id_persona], onDelete: Cascade)
+  gruppo  Gruppo?  @relation(fields: [id_gruppo], references: [id_gruppo], onDelete: Cascade)
+
+  @@map("storico_portafoglio")
+}
+
+// ─────────────────────────────────────────────
+// AMICIZIA
+// ─────────────────────────────────────────────
+model Amicizia {
+  id_persona_1 Int
+  id_persona_2 Int
+  status       AmiciziaStatus
+  user_block   Int?            // FK nullable: chi ha bloccato
+  data_inizio  DateTime        @default(now())
+
+  persona1    Persona  @relation("Persona1", fields: [id_persona_1], references: [id_persona])
+  persona2    Persona  @relation("Persona2", fields: [id_persona_2], references: [id_persona])
+  blocker     Persona? @relation("UserBlock", fields: [user_block], references: [id_persona])
+
+  @@id([id_persona_1, id_persona_2])
+  @@map("amicizia")
+}
+
+// ─────────────────────────────────────────────
+// MEMBRO GRUPPO
+// ─────────────────────────────────────────────
+model Membro_Gruppo {
+  id_persona     Int
+  id_gruppo      Int
+  budget_iniziale Decimal @default(0) @db.Decimal(18, 2)
+  ruolo          RuoloGruppo
+
+  persona Persona @relation(fields: [id_persona], references: [id_persona], onDelete: Cascade)
+  gruppo  Gruppo  @relation(fields: [id_gruppo], references: [id_gruppo], onDelete: Cascade)
+
+  @@id([id_persona, id_gruppo])
+  @@map("membro_gruppo")
+}
+
+// ─────────────────────────────────────────────
+// INVITO GRUPPO
+// ─────────────────────────────────────────────
+model Invito_Gruppo {
+  id_invitato Int
+  id_mittente Int
+  id_gruppo   Int
+  data_invito DateTime @default(now())
+
+  invitato Persona @relation("Invitato", fields: [id_invitato], references: [id_persona], onDelete: Cascade)
+  mittente Persona @relation("Mittente", fields: [id_mittente], references: [id_persona], onDelete: Cascade)
+  gruppo   Gruppo  @relation(fields: [id_gruppo], references: [id_gruppo], onDelete: Cascade)
+
+  @@id([id_invitato, id_mittente, id_gruppo])
+  @@map("invito_gruppo")
+}
+
+// ─────────────────────────────────────────────
+// TRANSAZIONI
+// ─────────────────────────────────────────────
+model Transazione {
+  id_transazione    Int              @id @default(autoincrement())
+  id_stock          String           @db.VarChar(10)
+  id_portafoglio    Int
+  tipo              TransazioneTipo
+  importo_investito Decimal?         @db.Decimal(18, 2)   // null se Sell
+  stato             TransazioneStato @default(Pending)
+  prezzo_esecuzione Decimal          @db.Decimal(18, 6)
+  quantita_azioni   Decimal?         @db.Decimal(18, 6)   // null se Pending
+  data_ora          DateTime         @default(now())
+
+  stock       Stock       @relation(fields: [id_stock], references: [id_stock])
+  portafoglio Portafoglio @relation(fields: [id_portafoglio], references: [id_portafoglio], onDelete: Cascade)
+
+  @@map("transazione")
+}
+
+// ─────────────────────────────────────────────
+// WATCHLIST
+// ─────────────────────────────────────────────
+model Watchlist {
+  id_persona Int
+  id_stock   String @db.VarChar(10)
+
+  persona Persona @relation(fields: [id_persona], references: [id_persona], onDelete: Cascade)
+  stock   Stock   @relation(fields: [id_stock], references: [id_stock], onDelete: Cascade)
+
+  @@id([id_persona, id_stock])
+  @@map("watchlist")
+}
+
+// ─────────────────────────────────────────────
+// AZIONI IN POSSESSO
+// ─────────────────────────────────────────────
+model Azioni_in_possesso {
+  id_portafoglio       Int
+  id_stock             String  @db.VarChar(10)
+  prezzo_medio_acquisto Decimal @db.Decimal(18, 2)
+  numero               Decimal @db.Decimal(18, 6)
+
+  portafoglio Portafoglio @relation(fields: [id_portafoglio], references: [id_portafoglio], onDelete: Cascade)
+  stock       Stock       @relation(fields: [id_stock], references: [id_stock], onDelete: Cascade)
+
+  @@id([id_portafoglio, id_stock])
+  @@map("azioni_in_possesso")
+}
+
+// ─────────────────────────────────────────────
+// ENUM
+// ─────────────────────────────────────────────
+enum GruppoPrivacy {
+  Public
+  Private
+}
+
+enum AmiciziaStatus {
+  Pending
+  Accepted
+}
+
+enum RuoloGruppo {
+  Owner
+  Admin
+  User
+  Guest
+  Spectator
+}
+
+enum TransazioneTipo {
+  Buy
+  Sell
+}
+
+enum TransazioneStato {
+  Pending
+  Executed
 }
