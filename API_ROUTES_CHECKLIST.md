@@ -43,6 +43,7 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Transazioni profilo (history)
 - [x] Worker / Cron motore trading
 - [x] Azioni possedute di un portafoglio (holdings)
+- [x] Storico saldo per ogni portafoglio
 
 ## Watchlist
 - [ ] Lista ticker salvati

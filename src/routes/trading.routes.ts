@@ -6,6 +6,7 @@ import {
 import {
   cancelPendingOrder,
   createOrder,
+  getPortfolioBalanceHistory,
   getPortfolioHoldings,
   getProfileTransactions,
 } from '../controllers/tradingOrders.controller';
@@ -22,6 +23,11 @@ tradingRouter.get(
 tradingRouter.get(
   '/portfolio/:id_portafoglio/holdings',
   getPortfolioHoldings
+);
+
+tradingRouter.get(
+  '/portfolio/:id_portafoglio/balance-history',
+  getPortfolioBalanceHistory
 );
 
 tradingRouter.get(

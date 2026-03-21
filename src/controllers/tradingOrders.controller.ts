@@ -43,6 +43,10 @@ const PortfolioHoldingsParamsSchema = z.object({
   id_portafoglio: z.coerce.number().int().positive(),
 });
 
+const PortfolioHistoryParamsSchema = z.object({
+  id_portafoglio: z.coerce.number().int().positive(),
+});
+
 const PENDING_PRICE = new Prisma.Decimal(0);
 
 function serializeTransaction(t: {
@@ -395,6 +399,56 @@ export async function getPortfolioHoldings(req: Request, res: Response): Promise
       settore: h.stock.settore,
       numero: h.numero.toString(),
       prezzo_medio_acquisto: h.prezzo_medio_acquisto.toString(),
+    })),
+  });
+}
+
+export async function getPortfolioBalanceHistory(req: Request, res: Response): Promise<void> {
+  const parsed = PortfolioHistoryParamsSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'id_portafoglio non valido.',
+    });
+    return;
+  }
+
+  const { id_portafoglio } = parsed.data;
+
+  const portfolio = await prisma.portafoglio.findUnique({
+    where: { id_portafoglio },
+    select: {
+      id_portafoglio: true,
+      id_persona: true,
+      id_gruppo: true,
+    },
+  });
+
+  if (!portfolio) {
+    res.status(404).json({
+      error: 'PORTFOLIO_NOT_FOUND',
+      message: 'Portafoglio non trovato.',
+    });
+    return;
+  }
+
+  const history = await prisma.storico_Portafoglio.findMany({
+    where: {
+      id_persona: portfolio.id_persona,
+      id_gruppo: portfolio.id_gruppo,
+    },
+    orderBy: {
+      data: 'asc',
+    },
+  });
+
+  res.json({
+    id_portafoglio,
+    count: history.length,
+    history: history.map((row) => ({
+      data: row.data.toISOString().slice(0, 10),
+      valore_totale: row.valore_totale.toString(),
     })),
   });
 }

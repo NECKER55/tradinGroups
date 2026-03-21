@@ -10,6 +10,7 @@ import rateLimit from 'express-rate-limit';
 import router from './routes';
 import { errorHandler } from './middleware/errorHandler';
 import { startCronJobs } from './jobs/tradingEngine';
+import { startDailyPortfolioValuationJob } from './jobs/portfolioValuation';
 
 const app  = express();
 const PORT = parseInt(process.env.PORT ?? '3000');
@@ -65,6 +66,7 @@ app.listen(PORT, () => {
   // Avvia i cron job solo in produzione o se esplicitamente abilitati.
   if (process.env.NODE_ENV === 'production' || process.env.ENABLE_CRON === 'true') {
     startCronJobs();
+    startDailyPortfolioValuationJob();
   }
 });
 
