@@ -179,7 +179,8 @@ model Transazione {
   stato             TransazioneStato @default(Pending)
   prezzo_esecuzione Decimal          @db.Decimal(18, 6)
   quantita_azioni   Decimal?         @db.Decimal(18, 6)   // null se Pending
-  data_ora          DateTime         @default(now())
+  created_at        DateTime         @default(now())
+  approved_at       DateTime?
 
   stock       Stock       @relation(fields: [id_stock], references: [id_stock])
   portafoglio Portafoglio @relation(fields: [id_portafoglio], references: [id_portafoglio], onDelete: Cascade)

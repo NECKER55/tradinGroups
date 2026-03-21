@@ -141,7 +141,8 @@ async function main() {
         stato:             TransazioneStato.Executed,
         prezzo_esecuzione: 175.50,
         quantita_azioni:   5.698,
-        data_ora:          new Date('2024-01-15T10:30:00Z'),
+        created_at:        new Date('2024-01-15T10:30:00Z'),
+        approved_at:       new Date('2024-01-15T10:35:00Z'),
       },
     });
   }

@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const privateBalance_controller_1 = require("../controllers/privateBalance.controller");
+const tradingOrders_controller_1 = require("../controllers/tradingOrders.controller");
+const auth_1 = require("../middleware/auth");
+const privatePortfolio_1 = require("../middleware/privatePortfolio");
+const tradingRouter = (0, express_1.Router)();
+tradingRouter.get('/transactions/profile', tradingOrders_controller_1.getProfileTransactions);
+tradingRouter.get('/portfolio/:id_portafoglio/holdings', tradingOrders_controller_1.getPortfolioHoldings);
+tradingRouter.get('/private/balance', auth_1.authenticate, privatePortfolio_1.requirePrivatePortfolio, privateBalance_controller_1.getPrivateBalance);
+tradingRouter.put('/private/balance', auth_1.authenticate, privatePortfolio_1.requirePrivatePortfolio, privateBalance_controller_1.updatePrivateBalance);
+tradingRouter.post('/orders', auth_1.authenticate, tradingOrders_controller_1.createOrder);
+tradingRouter.delete('/orders/:id_transazione', auth_1.authenticate, tradingOrders_controller_1.cancelPendingOrder);
+exports.default = tradingRouter;

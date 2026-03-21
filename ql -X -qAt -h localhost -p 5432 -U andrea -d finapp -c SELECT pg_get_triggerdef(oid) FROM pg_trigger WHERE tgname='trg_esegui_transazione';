@@ -1,0 +1,5 @@
+                                                            pg_get_triggerdef                                                             
+------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE TRIGGER trg_esegui_transazione BEFORE UPDATE OF stato ON public.transazione FOR EACH ROW EXECUTE FUNCTION fn_esegui_transazione()
+(1 row)
+

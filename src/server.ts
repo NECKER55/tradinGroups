@@ -62,7 +62,7 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Server avviato su http://localhost:${PORT}`);
   console.log(`   Ambiente: ${process.env.NODE_ENV ?? 'development'}\n`);
 
-  // Avvia i cron job solo in produzione o se esplicitamente abilitati
+  // Avvia i cron job solo in produzione o se esplicitamente abilitati.
   if (process.env.NODE_ENV === 'production' || process.env.ENABLE_CRON === 'true') {
     startCronJobs();
   }

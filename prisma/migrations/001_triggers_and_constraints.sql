@@ -7,19 +7,22 @@
 
 -- =============================================================
 -- A. TRIGGER DI ESECUZIONE (Pending → Executed)
--- Quando una transazione passa a Executed, aggiorna
--- Azioni_in_possesso e la liquidità del portafoglio.
+-- Quando una transazione passa a Executed, completa il settlement.
+-- BUY: aggiunge azioni in possesso (fondi già scalati in Pending).
+-- SELL: accredita liquidità (azioni già scalate in Pending).
 -- =============================================================
 
 CREATE OR REPLACE FUNCTION fn_esegui_transazione()
 RETURNS TRIGGER AS $$
 DECLARE
   v_ricavo DECIMAL(18,6);
-  v_possesso DECIMAL(18,6);
   v_prezzo_medio DECIMAL(18,2);
 BEGIN
   -- Attiva solo quando stato passa da Pending a Executed
   IF OLD.stato = 'Pending' AND NEW.stato = 'Executed' THEN
+
+    -- Traccia il momento di approvazione/esecuzione.
+    NEW.approved_at := NOW();
 
     IF NEW.tipo = 'Buy' THEN
       -- Aggiorna o inserisce Azioni_in_possesso con prezzo medio ponderato
@@ -34,37 +37,9 @@ BEGIN
           ),
           numero = azioni_in_possesso.numero + EXCLUDED.numero;
 
-      -- Scala la liquidità dal portafoglio
-      UPDATE portafoglio
-        SET liquidita = liquidita - NEW.importo_investito
-      WHERE id_portafoglio = NEW.id_portafoglio;
-
     ELSIF NEW.tipo = 'Sell' THEN
-      -- Controlla che l'utente abbia abbastanza azioni
-      SELECT numero INTO v_possesso
-        FROM azioni_in_possesso
-       WHERE id_portafoglio = NEW.id_portafoglio
-         AND id_stock = NEW.id_stock;
-
-      IF v_possesso IS NULL OR v_possesso < NEW.quantita_azioni THEN
-        RAISE EXCEPTION 'Azioni insufficienti per la vendita (possedute: %, richieste: %)',
-          COALESCE(v_possesso, 0), NEW.quantita_azioni;
-      END IF;
-
       -- Calcola ricavo
       v_ricavo := NEW.quantita_azioni * NEW.prezzo_esecuzione;
-
-      -- Diminuisce le azioni
-      UPDATE azioni_in_possesso
-        SET numero = numero - NEW.quantita_azioni
-      WHERE id_portafoglio = NEW.id_portafoglio
-        AND id_stock = NEW.id_stock;
-
-      -- Rimuove la riga se le azioni arrivano a 0
-      DELETE FROM azioni_in_possesso
-       WHERE id_portafoglio = NEW.id_portafoglio
-         AND id_stock = NEW.id_stock
-         AND numero <= 0;
 
       -- Accredita il ricavo nel portafoglio
       UPDATE portafoglio
@@ -79,7 +54,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_esegui_transazione ON transazione;
 CREATE TRIGGER trg_esegui_transazione
-  AFTER UPDATE OF stato ON transazione
+  BEFORE UPDATE OF stato ON transazione
   FOR EACH ROW
   EXECUTE FUNCTION fn_esegui_transazione();
 
