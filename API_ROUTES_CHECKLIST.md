@@ -14,12 +14,13 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [ ] Cambio password
 
 ## Amicizie (Friends)
-- [ ] Lista amici
-- [ ] Richieste in sospeso
-- [ ] Invia richiesta
-- [ ] Accetta richiesta
-- [ ] Rifiuta richiesta
-- [ ] Blocca utente
+- [x] Lista amici e richieste in sospeso
+- [x] Invia richiesta
+- [x] Annulla richiesta
+- [x] Accetta richiesta
+- [x] Rifiuta richiesta
+- [x] Blocca utente
+- [x] Sblocca utente
 
 ## Gruppi (Groups)
 - [ ] Elenco gruppi
@@ -46,17 +47,17 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Storico saldo per ogni portafoglio
 
 ## Watchlist
-- [ ] Lista ticker salvati
-- [ ] Aggiungi ticker
-- [ ] Rimuovi ticker
+- [x] Lista ticker salvati
+- [x] Aggiungi ticker
+- [x] Rimuovi ticker
 
 ## Ricerca
-- [ ] Ricerca titoli (ticker/nome società)
-- [ ] Ricerca utenti
+- [x] Ricerca titoli (ticker/nome società)
+- [x] Ricerca utenti
 - [ ] Ricerca gruppi
 
 ## Altro
-- [ ] Bloccare utente
+- [x] Bloccare utente
 - [ ] Endpoint media/upload per photo_url
 
 ---

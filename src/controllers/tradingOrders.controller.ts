@@ -39,12 +39,25 @@ const ProfileTransactionsQuerySchema = z.object({
   days: z.coerce.number().int().positive().max(365).default(10),
 });
 
+const PrefixSearchQuerySchema = z.object({
+  q: z.string().trim().min(1).max(50),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+});
+
 const PortfolioHoldingsParamsSchema = z.object({
   id_portafoglio: z.coerce.number().int().positive(),
 });
 
 const PortfolioHistoryParamsSchema = z.object({
   id_portafoglio: z.coerce.number().int().positive(),
+});
+
+const WatchlistBodySchema = z.object({
+  id_stock: z.string().trim().toUpperCase().min(1).max(10),
+});
+
+const WatchlistParamsSchema = z.object({
+  id_stock: z.string().trim().toUpperCase().min(1).max(10),
 });
 
 const PENDING_PRICE = new Prisma.Decimal(0);
@@ -351,6 +364,123 @@ export async function getProfileTransactions(req: Request, res: Response): Promi
   });
 }
 
+export async function searchStocksByPrefix(req: Request, res: Response): Promise<void> {
+  const parsed = PrefixSearchQuerySchema.safeParse(req.query);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Query di ricerca non valida.',
+    });
+    return;
+  }
+
+  const term = parsed.data.q.toLowerCase();
+  const limit = parsed.data.limit;
+
+  const rows = await prisma.$queryRaw<Array<{
+    id_stock: string;
+    nome_societa: string;
+    settore: string;
+  }>>(Prisma.sql`
+    SELECT id_stock, nome_societa, settore
+    FROM stock
+    WHERE lower(nome_societa) LIKE ${`${term}%`}
+    ORDER BY nome_societa ASC
+    LIMIT ${limit}
+  `);
+
+  res.json({
+    q: parsed.data.q,
+    count: rows.length,
+    results: rows,
+  });
+}
+
+export async function searchPeopleByUsernameOrId(req: Request, res: Response): Promise<void> {
+  const parsed = PrefixSearchQuerySchema.safeParse(req.query);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Query di ricerca non valida.',
+    });
+    return;
+  }
+
+  const rawTerm = parsed.data.q.trim();
+  const term = rawTerm.toLowerCase();
+  const limit = parsed.data.limit;
+  const isNumericPrefix = /^\d+$/.test(rawTerm);
+  const requesterId = (req as Partial<AuthRequest>).user?.sub ?? null;
+
+  const requesterBlockedFilter = requesterId
+    ? Prisma.sql`
+        AND NOT EXISTS (
+          SELECT 1
+          FROM amicizia a
+          WHERE (
+            (a.id_persona_1 = p.id_persona AND a.id_persona_2 = ${requesterId})
+            OR (a.id_persona_2 = p.id_persona AND a.id_persona_1 = ${requesterId})
+          )
+          AND a.user_block = p.id_persona
+        )
+      `
+    : Prisma.empty;
+
+  const friendshipSelect = requesterId
+    ? Prisma.sql`
+        EXISTS (
+          SELECT 1
+          FROM amicizia af
+          WHERE (
+            (af.id_persona_1 = p.id_persona AND af.id_persona_2 = ${requesterId})
+            OR (af.id_persona_2 = p.id_persona AND af.id_persona_1 = ${requesterId})
+          )
+          AND af.status = 'Accepted'
+          AND af.user_block IS NULL
+        ) AS is_friend
+      `
+    : Prisma.sql`false AS is_friend`;
+
+  const rows = isNumericPrefix
+    ? await prisma.$queryRaw<Array<{
+        id_persona: number;
+        username: string;
+        photo_url: string | null;
+        is_friend: boolean;
+      }>>(Prisma.sql`
+        SELECT p.id_persona, p.username, p.photo_url, ${friendshipSelect}
+        FROM persona p
+        WHERE (
+          lower(p.username) LIKE ${`${term}%`}
+          OR (p.id_persona::text) LIKE ${`${rawTerm}%`}
+        )
+        ${requesterBlockedFilter}
+        ORDER BY p.username ASC
+        LIMIT ${limit}
+      `)
+    : await prisma.$queryRaw<Array<{
+        id_persona: number;
+        username: string;
+        photo_url: string | null;
+        is_friend: boolean;
+      }>>(Prisma.sql`
+        SELECT p.id_persona, p.username, p.photo_url, ${friendshipSelect}
+        FROM persona p
+        WHERE lower(p.username) LIKE ${`${term}%`}
+        ${requesterBlockedFilter}
+        ORDER BY p.username ASC
+        LIMIT ${limit}
+      `);
+
+  res.json({
+    q: parsed.data.q,
+    count: rows.length,
+    results: rows,
+  });
+}
+
 export async function getPortfolioHoldings(req: Request, res: Response): Promise<void> {
   const parsed = PortfolioHoldingsParamsSchema.safeParse(req.params);
 
@@ -449,6 +579,126 @@ export async function getPortfolioBalanceHistory(req: Request, res: Response): P
     history: history.map((row) => ({
       data: row.data.toISOString().slice(0, 10),
       valore_totale: row.valore_totale.toString(),
+    })),
+  });
+}
+
+export async function addStockToWatchlist(req: Request, res: Response): Promise<void> {
+  const parsed = WatchlistBodySchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_stock } = parsed.data;
+
+  const stock = await prisma.stock.findUnique({
+    where: { id_stock },
+    select: { id_stock: true },
+  });
+
+  if (!stock) {
+    res.status(404).json({
+      error: 'STOCK_NOT_FOUND',
+      message: 'Titolo non trovato.',
+    });
+    return;
+  }
+
+  try {
+    await prisma.watchlist.create({
+      data: {
+        id_persona: sub,
+        id_stock,
+      },
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2002'
+    ) {
+      res.status(409).json({
+        error: 'WATCHLIST_ALREADY_EXISTS',
+        message: 'Questo titolo e gia presente nella tua watchlist.',
+      });
+      return;
+    }
+
+    throw error;
+  }
+
+  res.status(201).json({
+    message: 'Titolo aggiunto alla watchlist.',
+    id_stock,
+  });
+}
+
+export async function removeStockFromWatchlist(req: Request, res: Response): Promise<void> {
+  const parsed = WatchlistParamsSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'id_stock non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_stock } = parsed.data;
+
+  const deleted = await prisma.watchlist.deleteMany({
+    where: {
+      id_persona: sub,
+      id_stock,
+    },
+  });
+
+  if (deleted.count === 0) {
+    res.status(404).json({
+      error: 'WATCHLIST_ENTRY_NOT_FOUND',
+      message: 'Questo titolo non e presente nella tua watchlist.',
+    });
+    return;
+  }
+
+  res.json({
+    message: 'Titolo rimosso dalla watchlist.',
+    id_stock,
+  });
+}
+
+export async function getMyWatchlist(req: Request, res: Response): Promise<void> {
+  const { sub } = (req as AuthRequest).user;
+
+  const rows = await prisma.watchlist.findMany({
+    where: {
+      id_persona: sub,
+    },
+    include: {
+      stock: {
+        select: {
+          nome_societa: true,
+          settore: true,
+        },
+      },
+    },
+    orderBy: {
+      id_stock: 'asc',
+    },
+  });
+
+  res.json({
+    count: rows.length,
+    results: rows.map((row) => ({
+      id_stock: row.id_stock,
+      nome_societa: row.stock.nome_societa,
+      settore: row.stock.settore,
     })),
   });
 }

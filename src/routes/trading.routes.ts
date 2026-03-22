@@ -4,13 +4,28 @@ import {
   updatePrivateBalance,
 } from '../controllers/privateBalance.controller';
 import {
+  acceptFriendRequest,
+  blockUser,
+  cancelSentFriendRequest,
+  getMyFriendships,
+  removeFriendship,
+  rejectFriendRequest,
+  sendFriendRequest,
+  unblockUser,
+} from '../controllers/friendships.controller';
+import {
+  addStockToWatchlist,
   cancelPendingOrder,
   createOrder,
   getPortfolioBalanceHistory,
   getPortfolioHoldings,
   getProfileTransactions,
+  getMyWatchlist,
+  removeStockFromWatchlist,
+  searchPeopleByUsernameOrId,
+  searchStocksByPrefix,
 } from '../controllers/tradingOrders.controller';
-import { authenticate } from '../middleware/auth';
+import { authenticate, optionalAuth } from '../middleware/auth';
 import { requirePrivatePortfolio } from '../middleware/privatePortfolio';
 
 const tradingRouter = Router();
@@ -18,6 +33,65 @@ const tradingRouter = Router();
 tradingRouter.get(
   '/transactions/profile',
   getProfileTransactions
+);
+
+tradingRouter.get(
+  '/stocks/search',
+  searchStocksByPrefix
+);
+
+tradingRouter.get(
+  '/users/search',
+  optionalAuth,
+  searchPeopleByUsernameOrId
+);
+
+tradingRouter.post(
+  '/friendships/requests',
+  authenticate,
+  sendFriendRequest
+);
+
+tradingRouter.get(
+  '/friendships',
+  authenticate,
+  getMyFriendships
+);
+
+tradingRouter.post(
+  '/friendships/:id_persona/accept',
+  authenticate,
+  acceptFriendRequest
+);
+
+tradingRouter.post(
+  '/friendships/:id_persona/reject',
+  authenticate,
+  rejectFriendRequest
+);
+
+tradingRouter.delete(
+  '/friendships/:id_persona/request',
+  authenticate,
+  cancelSentFriendRequest
+);
+
+tradingRouter.delete(
+  '/friendships/:id_persona',
+  authenticate,
+  removeFriendship
+);
+
+tradingRouter.post(
+  '/friendships/:id_persona/block',
+  authenticate,
+  blockUser
+);
+
+tradingRouter.post(
+  '/friendships/:id_persona/unblock',
+  authenticate,
+  unblockUser
 );
 
 tradingRouter.get(
@@ -48,6 +122,24 @@ tradingRouter.post(
   '/orders',
   authenticate,
   createOrder
+);
+
+tradingRouter.post(
+  '/watchlist',
+  authenticate,
+  addStockToWatchlist
+);
+
+tradingRouter.get(
+  '/watchlist',
+  authenticate,
+  getMyWatchlist
+);
+
+tradingRouter.delete(
+  '/watchlist/:id_stock',
+  authenticate,
+  removeStockFromWatchlist
 );
 
 tradingRouter.delete(
