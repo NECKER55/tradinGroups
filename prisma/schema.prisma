@@ -17,6 +17,7 @@ datasource db {
 model Persona {
   id_persona  Int      @id @default(autoincrement())
   username    String   @unique @db.VarChar(50)
+  username_changed_at DateTime? @db.Timestamp(3)
   photo_url   String?  @db.VarChar(255)
   is_banned   Boolean  @default(false)
   is_superuser Boolean @default(false)

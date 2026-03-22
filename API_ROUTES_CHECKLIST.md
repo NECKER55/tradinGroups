@@ -10,8 +10,10 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Dati utente (me)
 
 ## Users / Profilo
-- [ ] Modifica profilo (username/email/photo_url)
-- [ ] Cambio password
+- [x] Modifica username
+- [x] Modifica email
+- [ ] Modifica photo_url
+- [x] Cambio password
 
 ## Amicizie (Friends)
 - [x] Lista amici e richieste in sospeso
@@ -23,25 +25,32 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Sblocca utente
 
 ## Gruppi (Groups)
-- [ ] Elenco gruppi
-- [ ] Dettagli gruppo + membri + transazioni
-- [ ] Crea gruppo
-- [ ] Invia invito (Admin/Owner)
-- [ ] Inviti ricevuti
-- [ ] Accetta invito
-- [ ] Rifiuta invito
-- [ ] Cambia ruolo membro (Owner only)
-- [ ] Espelli/abbandona membro
-- [ ] Modifica impostazioni gruppo (Admin/Owner)
-- [ ] Elimina gruppo
-- [ ] Modifica fondi membro (Admin/Owner)
+- [x] Elenco gruppi in cui si fa parte
+- [x] Elenco membri del gruppo con ruolo
+- [x] Info del gruppo (nome, foto)
+- [x] Crea gruppo
+- [x] Invia invito (Admin/Owner)
+- [x] Inviti ricevuti
+- [x] Accetta invito
+- [x] Rifiuta invito
+- [x] Cambia ruolo membro (Owner only)
+- [x] Espelli
+- [x] Abbandona
+- [x] Modifica nome gruppo (owner)
+- [x] Modifica privacy gruppo (owner)
+- [ ] Modifica foto profilo gruppo (owner)
+- [ ] Modifica descrizione gruppo (owner)  (non esiste nello schema prisma)
+- [x] Elimina gruppo
+- [x] Modifica fondi membro (Admin/Owner)
+- [x] Classifica gruppo
 
 ## Trading / Ordini / Portafogli
 - [x] Saldo portafoglio privato (GET)
 - [x] Modifica saldo portafoglio privato (PUT)
 - [x] Crea ordine Buy/Sell (POST)
 - [x] Annulla ordine Pending (DELETE)
-- [x] Transazioni profilo (history)
+- [x] Transazioni (pending)
+- [x] Transazioni eseguite profilo (history)
 - [x] Worker / Cron motore trading
 - [x] Azioni possedute di un portafoglio (holdings)
 - [x] Storico saldo per ogni portafoglio
@@ -54,11 +63,8 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 ## Ricerca
 - [x] Ricerca titoli (ticker/nome società)
 - [x] Ricerca utenti
-- [ ] Ricerca gruppi
+- [x] Ricerca gruppi
 
-## Altro
-- [x] Bloccare utente
-- [ ] Endpoint media/upload per photo_url
 
 ---
 

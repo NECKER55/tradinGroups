@@ -1,6 +1,7 @@
 // src/controllers/auth.controller.ts
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jwt';
@@ -21,6 +22,19 @@ const RegisterSchema = z.object({
 const LoginSchema = z.object({
   email:    z.string().email(),
   password: z.string(),
+});
+
+const ChangePasswordSchema = z.object({
+  old_password: z.string().min(1, 'old_password obbligatoria.'),
+  new_password: z.string().min(8, 'La nuova password deve avere almeno 8 caratteri.'),
+  confirm_new_password: z.string(),
+}).refine((d) => d.new_password === d.confirm_new_password, {
+  message: 'Le nuove password non corrispondono.',
+  path: ['confirm_new_password'],
+});
+
+const ChangeUsernameSchema = z.object({
+  username: z.string().trim().min(3).max(50),
 });
 
 // ─── POST /api/auth/register ──────────────────────────────────
@@ -192,6 +206,176 @@ export async function me(req: Request, res: Response): Promise<void> {
   }
 
   res.json(persona);
+}
+
+export async function changeMyPassword(req: Request, res: Response): Promise<void> {
+  const parsed = ChangePasswordSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { old_password, new_password } = parsed.data;
+
+  if (old_password === new_password) {
+    res.status(400).json({
+      error: 'PASSWORD_UNCHANGED',
+      message: 'La nuova password deve essere diversa da quella attuale.',
+    });
+    return;
+  }
+
+  const creds = await prisma.credenziali.findUnique({
+    where: { id_persona: sub },
+  });
+
+  if (!creds) {
+    res.status(404).json({
+      error: 'USER_NOT_FOUND',
+      message: 'Utente non trovato.',
+    });
+    return;
+  }
+
+  const matches = await bcrypt.compare(old_password, creds.password);
+  if (!matches) {
+    res.status(401).json({
+      error: 'INVALID_OLD_PASSWORD',
+      message: 'La password attuale non e corretta.',
+    });
+    return;
+  }
+
+  const hashed = await bcrypt.hash(new_password, 12);
+  await prisma.credenziali.update({
+    where: { id_persona: sub },
+    data: { password: hashed },
+  });
+
+  res.json({ message: 'Password aggiornata con successo.' });
+}
+
+export async function changeMyUsername(req: Request, res: Response): Promise<void> {
+  const parsed = ChangeUsernameSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub, is_superuser } = (req as AuthRequest).user;
+  const newUsername = parsed.data.username;
+
+  const rows = await prisma.$queryRaw<Array<{
+    id_persona: number;
+    username: string;
+    username_changed_at: Date | null;
+  }>>(Prisma.sql`
+    SELECT id_persona, username, username_changed_at
+    FROM persona
+    WHERE id_persona = ${sub}
+    LIMIT 1
+  `);
+
+  const persona = rows[0] ?? null;
+
+  if (!persona) {
+    res.status(404).json({
+      error: 'USER_NOT_FOUND',
+      message: 'Utente non trovato.',
+    });
+    return;
+  }
+
+  if (persona.username === newUsername) {
+    res.status(409).json({
+      error: 'USERNAME_UNCHANGED',
+      message: 'Il nuovo nome utente coincide con quello attuale.',
+    });
+    return;
+  }
+
+  if (persona.username_changed_at) {
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const elapsed = Date.now() - persona.username_changed_at.getTime();
+
+    if (elapsed < sevenDaysMs) {
+      const remainingDays = Math.ceil((sevenDaysMs - elapsed) / (24 * 60 * 60 * 1000));
+      res.status(429).json({
+        error: 'USERNAME_CHANGE_COOLDOWN',
+        message: `Puoi cambiare username di nuovo tra ${remainingDays} giorno/i.`,
+      });
+      return;
+    }
+  }
+
+  try {
+    const updated = await prisma.persona.update({
+      where: { id_persona: sub },
+      data: {
+        username: newUsername,
+      },
+      select: {
+        id_persona: true,
+        username: true,
+        photo_url: true,
+        is_superuser: true,
+        is_banned: true,
+      },
+    });
+
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE persona
+      SET username_changed_at = NOW()
+      WHERE id_persona = ${sub}
+    `);
+
+    const payload = {
+      sub: updated.id_persona,
+      username: updated.username,
+      is_superuser,
+    };
+
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken(payload);
+    setRefreshCookie(res, refreshToken);
+
+    res.json({
+      message: 'Username aggiornato con successo.',
+      access_token: accessToken,
+      user: {
+        id_persona: updated.id_persona,
+        username: updated.username,
+        photo_url: updated.photo_url,
+        is_superuser: updated.is_superuser,
+        is_banned: updated.is_banned,
+      },
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2002'
+    ) {
+      res.status(409).json({
+        error: 'USERNAME_IN_USE',
+        message: 'Nome utente gia in uso.',
+      });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'USERNAME_UPDATE_FAILED',
+      message: 'Impossibile aggiornare il nome utente.',
+    });
+  }
 }
 
 // ─── Utility ──────────────────────────────────────────────────
