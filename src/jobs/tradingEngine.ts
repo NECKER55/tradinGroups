@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma';
 import { fetchQuotesForTickers } from '../services/finnhub';
 
 const PROCESS_INTERVAL_MS = 60_000;
-const MIN_PENDING_AGE_MS = 5 * 60_000;
+const MIN_PENDING_AGE_MS = 20_000;
 
 let isProcessing = false;
 

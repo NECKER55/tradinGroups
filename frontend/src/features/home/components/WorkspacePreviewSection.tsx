@@ -1,110 +1,668 @@
+import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/context/AuthContext';
+import {
+  BalanceHistoryPoint,
+  cancelPendingOrder,
+  HoldingItem,
+  StockSearchItem,
+  TransactionItem,
+  WatchlistItem,
+  getMyWatchlist,
+  getPortfolioBalanceHistory,
+  getPortfolioHoldings,
+  getPrivateBalance,
+  getProfileTransactions,
+  searchStocks,
+  updatePrivateBalance,
+} from '../api/personalWorkspaceApi';
 
-const transactions = [
-  { asset: 'BTC/USDT', type: 'Long Position', amount: '$45,200.00', performance: '+8.4%', positive: true },
-  { asset: 'ETH/USDT', type: 'Short Position', amount: '$12,450.00', performance: '-2.1%', positive: false },
-  { asset: 'TSLA', type: 'Equity Trade', amount: '$5,000.00', performance: '+14.2%', positive: true },
-];
+type WorkspaceTab = 'assets' | 'history' | 'watchlist';
+type RangeKey = '1D' | '1W' | '1M' | '1Y' | 'ALL';
+
+function toCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+function toNumber(value: string | null | undefined): number {
+  if (!value) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function dateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function buildSeries(history: BalanceHistoryPoint[], range: RangeKey): { labels: string[]; values: number[] } {
+  const dayMap = new Map<string, number>();
+  const monthMap = new Map<string, number>();
+
+  for (const row of history) {
+    const value = toNumber(row.valore_totale);
+    dayMap.set(row.data, value);
+    monthMap.set(row.data.slice(0, 7), value);
+  }
+
+  const now = new Date();
+
+  if (range === '1D') {
+    const labels: string[] = [];
+    const values: number[] = [];
+    for (let i = 23; i >= 0; i--) {
+      const d = new Date(now);
+      d.setHours(now.getHours() - i, 0, 0, 0);
+      labels.push(`${String(d.getHours()).padStart(2, '0')}:00`);
+      values.push(dayMap.get(dateKey(d)) ?? 0);
+    }
+    return { labels, values };
+  }
+
+  if (range === '1W' || range === '1M') {
+    const span = range === '1W' ? 7 : 30;
+    const labels: string[] = [];
+    const values: number[] = [];
+    for (let i = span - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      labels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
+      values.push(dayMap.get(dateKey(d)) ?? 0);
+    }
+    return { labels, values };
+  }
+
+  if (range === '1Y') {
+    const labels: string[] = [];
+    const values: number[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      labels.push(d.toLocaleString('en-US', { month: 'short' }).toUpperCase());
+      values.push(monthMap.get(monthKey(d)) ?? 0);
+    }
+    return { labels, values };
+  }
+
+  const first = history.length ? new Date(history[0].data) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const labels: string[] = [];
+  const values: number[] = [];
+  const cursor = new Date(first.getFullYear(), first.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  while (cursor <= end) {
+    labels.push(`${cursor.toLocaleString('en-US', { month: 'short' }).toUpperCase()} ${String(cursor.getFullYear()).slice(-2)}`);
+    values.push(monthMap.get(monthKey(cursor)) ?? 0);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return { labels, values };
+}
 
 export function WorkspacePreviewSection() {
-  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+  const { isAuthenticated, user } = useAuth();
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('assets');
+  const [range, setRange] = useState<RangeKey>('1M');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [cash, setCash] = useState(0);
+  const [holdings, setHoldings] = useState<HoldingItem[]>([]);
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [history, setHistory] = useState<BalanceHistoryPoint[]>([]);
+  const [balanceAmount, setBalanceAmount] = useState('100.00');
+  const [balanceMessage, setBalanceMessage] = useState<string | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [isFundsPanelOpen, setIsFundsPanelOpen] = useState(false);
+  const [pendingBalanceAction, setPendingBalanceAction] = useState<'deposit' | 'withdraw' | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<StockSearchItem[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!pendingBalanceAction) return;
+
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [pendingBalanceAction]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    async function loadWorkspace() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const userId = user!.id_persona;
+        const privateBalance = await getPrivateBalance();
+        const portfolioId = privateBalance.portfolio.id_portafoglio;
+
+        const [holdingsRes, historyRes, txRes, watchlistRes] = await Promise.all([
+          getPortfolioHoldings(portfolioId),
+          getPortfolioBalanceHistory(portfolioId),
+          getProfileTransactions(userId, 365),
+          getMyWatchlist(),
+        ]);
+
+        if (!active) return;
+
+        setCash(toNumber(privateBalance.portfolio.liquidita));
+        setHoldings(holdingsRes.holdings);
+        setHistory(historyRes.history);
+        setTransactions(txRes.transactions);
+        setWatchlist(watchlistRes.results);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'Impossibile caricare il workspace personale.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void loadWorkspace();
+
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const txRes = await getProfileTransactions(user.id_persona, 365);
+        setTransactions(txRes.transactions);
+      } catch {
+        // Ignoriamo errori transient per evitare rumore UI durante polling.
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated, user]);
+
+  const chart = useMemo(() => buildSeries(history, range), [history, range]);
+  const maxChart = Math.max(1, ...chart.values);
+  const minChart = Math.min(...chart.values, 0);
+  const chartSpan = Math.max(1, maxChart - minChart);
+
+  const lastValue = history.length ? toNumber(history[history.length - 1].valore_totale) : 0;
+  const previousValue = history.length > 1 ? toNumber(history[history.length - 2].valore_totale) : 0;
+  const totalWealth = lastValue || cash;
+  const delta = previousValue > 0 ? ((totalWealth - previousValue) / previousValue) * 100 : 0;
+  const positiveDelta = delta >= 0;
+
+  const polylinePoints = chart.values
+    .map((value, index) => {
+      const x = chart.values.length > 1 ? (index / (chart.values.length - 1)) * 100 : 0;
+      const y = 100 - ((value - minChart) / chartSpan) * 100;
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  const areaPoints = `${polylinePoints} 100,100 0,100`;
+
+  useEffect(() => {
+    const q = searchTerm.trim();
+
+    if (!q) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    let active = true;
+    setSearchLoading(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const result = await searchStocks(q, 25);
+        if (!active) return;
+        setSearchResults(result.results);
+        setSearchError(null);
+      } catch (err) {
+        if (!active) return;
+        setSearchError(err instanceof Error ? err.message : 'Errore ricerca titoli.');
+        setSearchResults([]);
+      } finally {
+        if (active) setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [searchTerm]);
+
+  function toggleFundsPanel() {
+    setIsFundsPanelOpen((prev) => {
+      if (prev) {
+        setPendingBalanceAction(null);
+        setBalanceMessage(null);
+      }
+      return !prev;
+    });
+  }
+
+  function requestBalanceAction(type: 'deposit' | 'withdraw') {
+    const parsed = Number(balanceAmount);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setBalanceMessage('Inserisci un importo valido maggiore di 0.');
+      setPendingBalanceAction(null);
+      return;
+    }
+
+    setBalanceMessage(null);
+    setPendingBalanceAction(type);
+  }
+
+  async function handleBalanceUpdate(type: 'deposit' | 'withdraw') {
+    const parsed = Number(balanceAmount);
+    const actionLabel = type === 'deposit' ? 'deposito' : 'prelievo';
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setBalanceMessage('Inserisci un importo valido maggiore di 0.');
+      return;
+    }
+
+    const signed = type === 'withdraw' ? -parsed : parsed;
+
+    setBalanceLoading(true);
+    setBalanceMessage(null);
+    setPendingBalanceAction(null);
+    try {
+      const response = await updatePrivateBalance({ delta_liquidita: signed.toFixed(2) });
+      setCash(toNumber(response.portfolio.liquidita));
+      setBalanceMessage(`Operazione confermata: ${actionLabel} di ${toCurrency(parsed)}. ${response.message}`);
+    } catch (err) {
+      setBalanceMessage(err instanceof Error ? err.message : 'Operazione non riuscita.');
+    } finally {
+      setBalanceLoading(false);
+    }
+  }
+
+  async function handleCancelPendingOrder(idTransazione: number) {
+    setCancellingOrderId(idTransazione);
+    setError(null);
+    try {
+      await cancelPendingOrder(idTransazione);
+      setTransactions((prev) => prev.filter((tx) => tx.id_transazione !== idTransazione));
+      const privateBalance = await getPrivateBalance();
+      setCash(toNumber(privateBalance.portfolio.liquidita));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossibile annullare la transazione pending.');
+    } finally {
+      setCancellingOrderId(null);
+    }
+  }
 
   if (!isAuthenticated) return null;
 
   return (
-    <section className="mx-auto max-w-7xl border-t border-canvas/10 px-6 py-20">
-      <div className="mb-10 flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-black">Personal Workspace</h2>
-          <p className="text-sm text-canvas/50">Your private portfolio performance and recent activity.</p>
-        </div>
-        <button className="flex items-center gap-2 rounded-xl border border-canvas/15 bg-canvas/5 px-6 py-2.5 text-sm font-bold transition-all hover:bg-canvas/10">
-          <span className="material-symbols-outlined text-sm">settings</span>
-          Configure
-        </button>
+    <section className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-8">
+      <div className="flex items-center gap-4">
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
+        <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-violet-300/80">Personal Workspace</span>
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-3">
-        <article className="relative overflow-hidden rounded-[2rem] border border-canvas/15 bg-ink/70 p-8">
-          <div className="absolute right-0 top-0 h-32 w-32 -translate-y-1/2 translate-x-1/2 rounded-full bg-signal/25 blur-[60px]" />
-          <span className="mb-2 block text-xs font-bold uppercase tracking-widest text-canvas/50">Total Balance</span>
-          <h3 className="mb-4 text-4xl font-black">$1,245,892.00</h3>
-          <div className="mb-8 flex items-center gap-2">
-            <span className="flex items-center text-sm font-bold text-gain">
-              <span className="material-symbols-outlined mr-1 text-sm">trending_up</span>
-              +12.5%
+      <div className="rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
+        <div className="relative">
+          <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search stocks, ETFs..."
+            className="w-full rounded-xl border border-[#1f1f2e] bg-[#0f0f14] py-2.5 pl-10 pr-4 text-sm text-slate-100 outline-none transition-all placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/30"
+          />
+        </div>
+
+        {searchLoading ? <p className="mt-3 text-xs text-slate-400">Ricerca in corso...</p> : null}
+        {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
+
+        {searchTerm.trim() && !searchLoading && !searchError ? (
+          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+            {searchResults.length === 0 ? (
+              <p className="text-xs text-slate-400">Nessun titolo trovato.</p>
+            ) : (
+              searchResults.map((stock) => (
+                <div
+                  key={stock.id_stock}
+                  onClick={() => navigate(`/stocks/${stock.id_stock}`, { state: { stock } })}
+                  className="flex cursor-pointer items-center justify-between rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
+                >
+                  <div>
+                    <p className="text-sm font-bold text-slate-100">{stock.id_stock} - {stock.nome_societa}</p>
+                    <p className="text-[10px] uppercase text-slate-500">{stock.settore}</p>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-300">Apri</span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Total Wealth</p>
+          <div className="flex items-baseline gap-3">
+            <h2 className="text-4xl font-bold tracking-tight text-slate-100 md:text-5xl">{toCurrency(totalWealth)}</h2>
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${positiveDelta ? 'bg-violet-500/10 text-violet-400' : 'bg-rose-500/10 text-rose-400'}`}>
+              <span className="material-symbols-outlined mr-1 text-sm">{positiveDelta ? 'trending_up' : 'trending_down'}</span>
+              {positiveDelta ? '+' : ''}{delta.toFixed(2)}%
             </span>
-            <span className="text-[10px] font-bold uppercase text-canvas/45">vs last month</span>
           </div>
-          <div className="mt-auto flex gap-2">
-            <button className="flex-1 rounded-xl bg-signal py-3 text-xs font-bold text-obsidian transition-all hover:scale-[1.02]">Deposit</button>
-            <button className="flex-1 rounded-xl border border-canvas/15 bg-canvas/5 py-3 text-xs font-bold text-canvas transition-all hover:bg-canvas/10">Withdraw</button>
+          <div className="flex items-center gap-2 pt-2">
+            <p className="text-sm text-slate-500">Cash Balance:</p>
+            <p className="text-sm font-bold text-slate-100">{toCurrency(cash)}</p>
           </div>
-        </article>
+        </div>
+        <div className="relative w-full md:w-auto">
+          <div className="flex justify-start md:justify-end">
+            <button
+              onClick={toggleFundsPanel}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 px-5 text-sm font-semibold text-violet-200 transition-all duration-300 hover:bg-violet-500/20"
+            >
+              <span className="material-symbols-outlined text-base">account_balance_wallet</span>
+              {isFundsPanelOpen ? 'Chiudi gestione fondi' : 'Gestisci fondi'}
+            </button>
+          </div>
 
-        <article className="rounded-[2rem] border border-canvas/15 bg-ink/70 p-8 lg:col-span-2">
-          <div className="mb-8 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-widest text-canvas/50">Net Worth Growth</span>
-            <div className="flex gap-4 text-[10px] font-black uppercase tracking-widest">
-              <button className="text-signal">1D</button>
-              <button className="text-canvas/45">1W</button>
-              <button className="text-canvas/45">1M</button>
-            </div>
-          </div>
+          <AnimatePresence>
+            {isFundsPanelOpen ? (
+              <motion.div
+                initial={{ opacity: 0, y: -14, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -14, scale: 0.98 }}
+                transition={{ duration: 0.28, ease: 'easeInOut' }}
+                className="absolute left-0 right-0 top-[calc(100%+10px)] z-40 rounded-2xl border border-violet-500/25 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40 md:left-auto md:w-[460px]"
+              >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Wallet Actions</p>
+                  <p className="text-sm text-slate-300">Imposta un importo e scegli se depositare o prelevare.</p>
+                </div>
+                <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-200">
+                  Secure Confirm
+                </span>
+              </div>
 
-          <div className="mb-6 flex h-40 items-end gap-1">
-            {[40, 55, 45, 70, 65, 85, 95, 80, 100].map((value, index) => (
-              <div
-                key={`${value}-${index}`}
-                style={{ height: `${value}%` }}
-                className={`flex-1 rounded-t-lg ${index > 5 ? 'bg-signal/70' : 'bg-canvas/10'} ${index === 8 ? 'shadow-[0_0_20px_rgba(246,173,85,0.3)]' : ''}`}
-              />
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={balanceAmount}
+                  onChange={(e) => setBalanceAmount(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-[#1f1f2e] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
+                  placeholder="Importo"
+                />
+                <button
+                  onClick={() => requestBalanceAction('deposit')}
+                  disabled={balanceLoading}
+                  className="h-11 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-200 transition-all duration-300 hover:bg-emerald-500/20 disabled:opacity-70"
+                >
+                  Deposit
+                </button>
+                <button
+                  onClick={() => requestBalanceAction('withdraw')}
+                  disabled={balanceLoading}
+                  className="h-11 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 text-sm font-semibold text-amber-200 transition-all duration-300 hover:bg-amber-500/20 disabled:opacity-70"
+                >
+                  Withdraw
+                </button>
+              </div>
+
+              {balanceMessage ? <p className="mt-3 text-xs text-slate-300">{balanceMessage}</p> : null}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {pendingBalanceAction ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 px-5"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 30, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.96 }}
+              transition={{ duration: 0.28, ease: 'easeInOut' }}
+              className="w-full max-w-md rounded-2xl border border-violet-400/30 bg-[#111118] p-5 shadow-2xl shadow-violet-900/30"
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Conferma operazione</p>
+              <p className="mt-3 text-sm text-slate-200">
+                Confermi di voler eseguire un
+                <span className="font-bold"> {pendingBalanceAction === 'deposit' ? 'deposito' : 'prelievo'} </span>
+                di <span className="font-bold text-violet-200">{toCurrency(Number(balanceAmount) || 0)}</span>?
+              </p>
+              <p className="mt-2 text-xs text-slate-400">Durante questa finestra tutte le altre azioni sono bloccate.</p>
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void handleBalanceUpdate(pendingBalanceAction)}
+                  disabled={balanceLoading}
+                  className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                >
+                  {balanceLoading ? 'Conferma in corso...' : 'Conferma'}
+                </button>
+                <button
+                  onClick={() => setPendingBalanceAction(null)}
+                  disabled={balanceLoading}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
+                >
+                  Annulla
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <div className="violet-underlight relative overflow-hidden rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-6">
+        <div className="absolute -left-24 -top-24 size-48 bg-violet-500/10 blur-[100px]" />
+        <div className="relative z-10 mb-8 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-slate-100">Portfolio Performance</h3>
+          <div className="flex rounded-lg border border-[#1f1f2e] bg-[#0a0a0c]/60 p-1">
+            {(['1D', '1W', '1M', '1Y', 'ALL'] as RangeKey[]).map((key) => (
+              <button
+                key={key}
+                onClick={() => setRange(key)}
+                className={`rounded-md px-4 py-1.5 text-xs font-bold ${range === key ? 'bg-violet-500 text-white' : 'text-slate-500 hover:text-slate-100'}`}
+              >
+                {key}
+              </button>
             ))}
           </div>
+        </div>
 
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {[
-              ['Assets', '12 Active'],
-              ['Trades', '1,042 Total'],
-              ['Win Rate', '68.4%'],
-              ['Level', 'Platinum III'],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-canvas/10 bg-canvas/5 p-3">
-                <p className="mb-1 text-[10px] font-bold uppercase text-canvas/45">{label}</p>
-                <p className="text-sm font-bold">{value}</p>
+        <div className="relative z-10 mt-4 h-[280px] w-full">
+          <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="wsChartFill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#a855f7" stopOpacity="0.30" />
+                <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="20" x2="100" y2="20" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
+            <line x1="0" y1="50" x2="100" y2="50" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
+            <line x1="0" y1="80" x2="100" y2="80" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
+            <polygon points={areaPoints} fill="url(#wsChartFill)" />
+            <polyline points={polylinePoints} fill="none" stroke="#a855f7" strokeWidth="0.8" strokeLinecap="round" />
+          </svg>
+        </div>
+
+        <div className="relative z-10 mt-4 flex justify-between gap-2 overflow-x-auto text-[11px] font-medium uppercase tracking-widest text-slate-500">
+          {chart.labels.map((label, idx) => (
+            <span key={`${label}-${idx}`} className="shrink-0">{label}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
+          {[
+            { id: 'assets' as WorkspaceTab, label: 'My Assets' },
+            { id: 'history' as WorkspaceTab, label: 'Transaction History' },
+            { id: 'watchlist' as WorkspaceTab, label: 'Watchlist' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`${activeTab === tab.id ? '' : 'text-slate-300 hover:text-slate-100'} relative rounded-full px-4 py-2 text-sm font-medium text-white outline-sky-400 transition focus-visible:outline-2`}
+              style={{ WebkitTapHighlightColor: 'transparent' }}
+            >
+              {activeTab === tab.id ? (
+                <motion.span
+                  layoutId="workspace-tab-bubble"
+                  className="absolute inset-0 z-10 bg-violet-500 shadow-lg shadow-violet-500/30"
+                  style={{ borderRadius: 9999 }}
+                  transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                />
+              ) : null}
+              <span className="relative z-20">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {loading ? <p className="text-sm text-slate-400">Caricamento dati workspace...</p> : null}
+        {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+
+        {!loading && !error && activeTab === 'assets' ? (
+          <div className="grid grid-cols-1 gap-4">
+            {holdings.length === 0 ? <p className="text-sm text-slate-400">Nessuna azione in possesso.</p> : null}
+            {holdings.map((item) => (
+              <div
+                key={item.id_stock}
+                onClick={() => navigate(`/stocks/${item.id_stock}`, { state: { stock: item } })}
+                className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-all hover:bg-[#1f1f2e]/40"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex size-12 items-center justify-center rounded-xl bg-slate-100 text-lg font-bold text-[#0a0a0c]">
+                    {item.id_stock}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-100">{item.nome_societa}</h4>
+                    <p className="text-xs text-slate-500">{toNumber(item.numero).toFixed(6)} Shares</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-slate-100">{toCurrency(toNumber(item.prezzo_medio_acquisto))}</p>
+                  <p className="text-xs font-semibold text-slate-400">Avg Buy Price</p>
+                </div>
               </div>
             ))}
           </div>
-        </article>
+        ) : null}
 
-        <article className="overflow-hidden rounded-[2rem] border border-canvas/15 bg-ink/40 lg:col-span-3">
-          <div className="flex items-center justify-between border-b border-canvas/10 p-6">
-            <h3 className="text-sm font-bold">Recent Transactions</h3>
-            <button className="text-[10px] font-bold uppercase text-signal">View All History</button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-canvas/10 text-[10px] font-bold uppercase text-canvas/45">
-                  <th className="px-6 py-4">Asset</th>
-                  <th className="px-6 py-4">Type</th>
-                  <th className="px-6 py-4">Amount</th>
-                  <th className="px-6 py-4 text-right">Performance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-canvas/10">
-                {transactions.map((row) => (
-                  <tr key={row.asset} className="text-sm transition-colors hover:bg-canvas/5">
-                    <td className="px-6 py-4 font-bold">{row.asset}</td>
-                    <td className="px-6 py-4 text-canvas/60">{row.type}</td>
-                    <td className="px-6 py-4 font-mono text-xs">{row.amount}</td>
-                    <td className={`px-6 py-4 text-right font-bold ${row.positive ? 'text-gain' : 'text-loss'}`}>{row.performance}</td>
+        {!loading && !error && activeTab === 'history' ? (
+          <div className="overflow-hidden rounded-xl border border-[#1f1f2e]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#1f1f2e] bg-[#13131a] text-xs uppercase tracking-wider text-slate-500">
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Ticker</th>
+                    <th className="px-4 py-3">Type</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Quantity</th>
+                    <th className="px-4 py-3 text-right">Total Value</th>
+                    <th className="px-4 py-3 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-[#1f1f2e] bg-[#0f0f14]">
+                  {transactions.length === 0 ? (
+                    <tr>
+                      <td className="px-4 py-4 text-slate-400" colSpan={7}>Nessuna transazione disponibile.</td>
+                    </tr>
+                  ) : (
+                    transactions.map((tx) => (
+                      <tr key={tx.id_transazione} className="hover:bg-[#1f1f2e]/35">
+                        <td className="px-4 py-3 text-slate-300">{new Date(tx.created_at).toLocaleString('it-IT')}</td>
+                        <td className="px-4 py-3 font-semibold text-slate-100">{tx.id_stock}</td>
+                        <td className={`px-4 py-3 font-semibold ${tx.tipo === 'Buy' ? 'text-violet-400' : 'text-rose-400'}`}>{tx.tipo}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${tx.stato === 'Executed' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                            {tx.stato}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">{tx.quantita_azioni ? toNumber(tx.quantita_azioni).toFixed(6) : '--'}</td>
+                        <td className="px-4 py-3 text-right font-mono text-slate-100">
+                          {tx.stato === 'Executed'
+                            ? toCurrency(tx.tipo === 'Buy'
+                              ? toNumber(tx.importo_investito)
+                              : toNumber(tx.quantita_azioni) * toNumber(tx.prezzo_esecuzione))
+                            : (tx.tipo === 'Buy' ? toCurrency(toNumber(tx.importo_investito)) : '--')}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {tx.stato === 'Pending' ? (
+                            <button
+                              onClick={() => void handleCancelPendingOrder(tx.id_transazione)}
+                              disabled={cancellingOrderId === tx.id_transazione}
+                              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-bold uppercase text-rose-300 transition-colors hover:bg-rose-500/20 disabled:opacity-70"
+                            >
+                              {cancellingOrderId === tx.id_transazione ? 'Cancelling...' : 'Cancel'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-500">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </article>
+        ) : null}
+
+        {!loading && !error && activeTab === 'watchlist' ? (
+          <div className="grid grid-cols-1 gap-4">
+            {watchlist.length === 0 ? <p className="text-sm text-slate-400">Watchlist vuota.</p> : null}
+            {watchlist.map((row) => (
+              <div
+                key={row.id_stock}
+                onClick={() => navigate(`/stocks/${row.id_stock}`, { state: { stock: row } })}
+                className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-colors hover:bg-[#1f1f2e]/40"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-lg bg-slate-100 text-sm font-bold text-[#0a0a0c]">{row.id_stock}</div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-100">{row.nome_societa}</p>
+                    <p className="text-[10px] uppercase text-slate-500">{row.settore}</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-violet-400">In Watchlist</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );

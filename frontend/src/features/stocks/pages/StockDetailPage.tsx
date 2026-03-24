@@ -1,0 +1,488 @@
+import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import {
+  addToWatchlist,
+  createOrder,
+  findHoldingForSymbol,
+  loadStockDetailBootstrap,
+  removeFromWatchlist,
+} from '../api/stockTradingApi';
+import { TradingViewWidget } from '../components/TradingViewWidget';
+import { Highlight } from '../../../shared/ui/Highlight';
+
+type TradeTab = 'buy' | 'sell';
+
+interface StockRouteState {
+  stock?: {
+    id_stock: string;
+    nome_societa: string;
+    settore: string;
+  };
+}
+
+function toCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+function toNumber(value: string | null | undefined): number {
+  if (!value) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function StockDetailPage() {
+  const { symbol = '' } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const state = (location.state as StockRouteState | null)?.stock;
+
+  const stockSymbol = symbol.toUpperCase();
+  const stockName = state?.nome_societa ?? stockSymbol;
+  const stockSector = state?.settore ?? 'Unknown sector';
+
+  const [loading, setLoading] = useState(true);
+  const [banner, setBanner] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [portfolioId, setPortfolioId] = useState<number | null>(null);
+  const [cash, setCash] = useState(0);
+  const [watchlisted, setWatchlisted] = useState(false);
+  const [holdingQty, setHoldingQty] = useState(0);
+
+  const [tradeTab, setTradeTab] = useState<TradeTab>('buy');
+  const [buyAmount, setBuyAmount] = useState('100.00');
+  const [sellQty, setSellQty] = useState('1');
+  const [submitting, setSubmitting] = useState(false);
+  const [pendingTradeConfirm, setPendingTradeConfirm] = useState<TradeTab | null>(null);
+
+  useEffect(() => {
+    if (!pendingTradeConfirm) return;
+
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [pendingTradeConfirm]);
+
+  useEffect(() => {
+    if (!stockSymbol) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    let active = true;
+
+    async function bootstrap() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await loadStockDetailBootstrap();
+        if (!active) return;
+
+        const holding = findHoldingForSymbol(data.holdings, stockSymbol);
+        const isInWatchlist = data.watchlist.some((item) => item.id_stock.toUpperCase() === stockSymbol);
+
+        setPortfolioId(data.portfolioId);
+        setCash(data.cash);
+        setHoldingQty(toNumber(holding?.numero));
+        setWatchlisted(isInWatchlist);
+
+        if (!holding || toNumber(holding.numero) <= 0) {
+          setTradeTab('buy');
+        }
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'Impossibile caricare i dettagli del titolo.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void bootstrap();
+
+    return () => {
+      active = false;
+    };
+  }, [navigate, stockSymbol]);
+
+  const canSell = holdingQty > 0;
+
+  const estimatedShares = useMemo(() => {
+    const amount = Number(buyAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
+    // Stima indicativa lato client in assenza quote realtime backend.
+    return amount / 100;
+  }, [buyAmount]);
+
+  async function refreshSnapshot() {
+    const data = await loadStockDetailBootstrap();
+    const holding = findHoldingForSymbol(data.holdings, stockSymbol);
+    const isInWatchlist = data.watchlist.some((item) => item.id_stock.toUpperCase() === stockSymbol);
+
+    setPortfolioId(data.portfolioId);
+    setCash(data.cash);
+    setHoldingQty(toNumber(holding?.numero));
+    setWatchlisted(isInWatchlist);
+  }
+
+  async function handleToggleWatchlist() {
+    setError(null);
+    setBanner(null);
+    try {
+      if (watchlisted) {
+        await removeFromWatchlist(stockSymbol);
+        setWatchlisted(false);
+        setBanner('Titolo rimosso dalla watchlist.');
+      } else {
+        await addToWatchlist(stockSymbol);
+        setWatchlisted(true);
+        setBanner('Titolo aggiunto alla watchlist.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Operazione watchlist non riuscita.');
+    }
+  }
+
+  function validateBuyBeforeConfirm(): boolean {
+    const amount = Number(buyAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Inserisci un importo buy valido.');
+      return false;
+    }
+
+    if (amount > cash) {
+      setError('Budget insufficiente per questo acquisto.');
+      return false;
+    }
+
+    return true;
+  }
+
+  async function handleConfirmBuy() {
+    if (!portfolioId) return;
+
+    const amount = Number(buyAmount);
+    setSubmitting(true);
+    setError(null);
+    setBanner(null);
+
+    try {
+      await createOrder({
+        id_portafoglio: portfolioId,
+        id_stock: stockSymbol,
+        tipo: 'Buy',
+        importo_investito: amount.toFixed(2),
+      });
+
+      setPendingTradeConfirm(null);
+      setBanner('Ordine di acquisto inviato con successo.');
+      await refreshSnapshot();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di acquisto.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function validateSellBeforeConfirm(): boolean {
+    const quantity = Number(sellQty);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError('Inserisci una quantita valida da vendere.');
+      return false;
+    }
+
+    if (quantity > holdingQty) {
+      setError('Non possiedi abbastanza azioni per questa vendita.');
+      return false;
+    }
+
+    return true;
+  }
+
+  async function handleConfirmSell() {
+    if (!portfolioId) return;
+
+    const quantity = Number(sellQty);
+
+    setSubmitting(true);
+    setError(null);
+    setBanner(null);
+
+    try {
+      await createOrder({
+        id_portafoglio: portfolioId,
+        id_stock: stockSymbol,
+        tipo: 'Sell',
+        quantita_azioni: quantity.toFixed(6),
+      });
+
+      setPendingTradeConfirm(null);
+      setBanner('Ordine di vendita inviato con successo.');
+      await refreshSnapshot();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di vendita.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleSellAll() {
+    setSellQty(holdingQty.toFixed(6));
+  }
+
+  if (loading) {
+    return (
+      <section className="mx-auto max-w-[1440px] px-6 py-10 text-slate-300">
+        Caricamento dettaglio titolo...
+      </section>
+    );
+  }
+
+  return (
+    <section className="mx-auto max-w-[1440px] px-6 py-8 text-slate-100">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          onClick={() => navigate(-1)}
+          aria-label="Torna indietro"
+          className="inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
+        >
+          <span className="material-symbols-outlined text-2xl">arrow_back</span>
+        </button>
+
+        <Highlight trigger={cash} duration={550} className="group rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-500/15 via-[#1a1126] to-transparent px-5 py-3 shadow-[0_0_28px_rgba(139,92,246,0.16)]">
+          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/80">Budget disponibile</p>
+          <p className="text-2xl font-black text-white transition-colors duration-300 group-data-[highlight=on]:text-violet-200 md:text-3xl">{toCurrency(cash)}</p>
+        </Highlight>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {banner ? (
+          <motion.div
+            key="stock-banner"
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.24, ease: 'easeOut' }}
+            className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
+          >
+            {banner}
+          </motion.div>
+        ) : error ? (
+          <motion.div
+            key="stock-error"
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.24, ease: 'easeOut' }}
+            className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
+          >
+            {error}
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <div className="flex flex-col gap-8 lg:flex-row">
+        <div className="flex-1 space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-white/10 bg-[#0f0f1a] text-xl font-bold">
+                {stockSymbol.slice(0, 4)}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-3xl font-bold">{stockSymbol}</h2>
+                  <button
+                    onClick={() => void handleToggleWatchlist()}
+                    className="material-symbols-outlined text-2xl text-yellow-400"
+                    style={{ fontVariationSettings: `'FILL' ${watchlisted ? 1 : 0}` }}
+                    aria-label="Toggle watchlist"
+                  >
+                    star
+                  </button>
+                </div>
+                <p className="text-sm text-slate-400">{stockName} • {stockSector}</p>
+              </div>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-sm text-slate-400">Posizione attuale</p>
+              <p className="text-xl font-bold">{holdingQty.toFixed(6)} shares</p>
+            </div>
+          </div>
+
+          <div className="violet-underlight">
+            <TradingViewWidget symbol={stockSymbol} />
+          </div>
+        </div>
+
+        <div className="w-full shrink-0 lg:w-[380px]">
+          <div className="sticky top-24 overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f1a] shadow-2xl shadow-violet-500/10">
+            <div className="border-b border-white/10 px-4 py-3">
+              <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
+                {[
+                  { id: 'buy' as TradeTab, label: `Buy ${stockSymbol}` },
+                  ...(canSell ? [{ id: 'sell' as TradeTab, label: `Sell ${stockSymbol}` }] : []),
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setTradeTab(tab.id)}
+                    className={`${tradeTab === tab.id ? '' : 'text-slate-300 hover:text-slate-100'} relative rounded-full px-4 py-2 text-sm font-medium text-white outline-sky-400 transition-all duration-300 focus-visible:outline-2`}
+                    style={{ WebkitTapHighlightColor: 'transparent' }}
+                  >
+                    {tradeTab === tab.id ? (
+                      <motion.span
+                        layoutId="stock-tab-bubble"
+                        className="absolute inset-0 z-10 bg-violet-500 shadow-lg shadow-violet-500/30"
+                        style={{ borderRadius: 9999 }}
+                        transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                      />
+                    ) : null}
+                    <span className="relative z-20">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-6 p-6">
+              {tradeTab === 'buy' ? (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Amount to Spend (USD)</label>
+                      <button onClick={() => setBuyAmount(cash.toFixed(2))} className="text-xs font-bold text-violet-300 hover:underline">Use Max</button>
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-violet-300">$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={buyAmount}
+                        onChange={(e) => setBuyAmount(e.target.value)}
+                        className="w-full rounded-xl border border-white/10 bg-white/5 py-4 pl-8 pr-4 text-xl font-bold text-white outline-none focus:ring-2 focus:ring-violet-500/40"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-400">Estimated Shares</span>
+                      <span className="font-bold text-white">{estimatedShares.toFixed(6)}</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-sm">
+                      <span className="text-slate-400">Order Fee</span>
+                      <span className="font-bold text-white">$0.00</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (validateBuyBeforeConfirm()) {
+                        setError(null);
+                        setPendingTradeConfirm('buy');
+                      }
+                    }}
+                    disabled={submitting}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-500 py-4 text-lg font-bold text-white shadow-lg shadow-violet-500/20 transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                  >
+                    Confirm Buy
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Shares to Sell</label>
+                      <button onClick={handleSellAll} className="text-xs font-bold text-violet-300 hover:underline">Sell all</button>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.000001"
+                      value={sellQty}
+                      onChange={(e) => setSellQty(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-xl font-bold text-white outline-none focus:ring-2 focus:ring-violet-500/40"
+                    />
+                    <p className="text-xs text-slate-400">Disponibili: {holdingQty.toFixed(6)} shares</p>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (validateSellBeforeConfirm()) {
+                        setError(null);
+                        setPendingTradeConfirm('sell');
+                      }
+                    }}
+                    disabled={submitting}
+                    className="w-full rounded-xl bg-violet-500 py-4 text-lg font-bold text-white shadow-lg shadow-violet-500/20 transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                  >
+                    Confirm Sell
+                  </button>
+                </>
+              )}
+
+              <div className="text-center">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Available to trade</p>
+                <p className="text-sm font-bold text-slate-200">{toCurrency(cash)} USD</p>
+              </div>
+            </div>
+
+            <div className="border-t border-white/10 bg-white/5 px-6 py-4">
+              <div className="flex items-center justify-center gap-2 text-xs font-medium text-slate-400">
+                <span className="material-symbols-outlined text-sm text-violet-300">verified_user</span>
+                Secured & Encrypted Execution
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {pendingTradeConfirm ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 px-5"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 28, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.96 }}
+              transition={{ duration: 0.28, ease: 'easeInOut' }}
+              className="w-full max-w-md rounded-2xl border border-violet-400/30 bg-[#111118] p-5 shadow-2xl shadow-violet-900/30"
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Conferma ordine</p>
+              <p className="mt-3 text-sm text-slate-200">
+                {pendingTradeConfirm === 'buy'
+                  ? `Confermi l'acquisto di ${toCurrency(Number(buyAmount) || 0)} di ${stockSymbol}?`
+                  : `Confermi la vendita di ${Number(sellQty).toFixed(6)} shares di ${stockSymbol}?`}
+              </p>
+              <p className="mt-2 text-xs text-slate-400">Le altre interazioni sono temporaneamente bloccate.</p>
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void (pendingTradeConfirm === 'buy' ? handleConfirmBuy() : handleConfirmSell())}
+                  disabled={submitting}
+                  className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                >
+                  {submitting ? 'Conferma in corso...' : pendingTradeConfirm === 'buy' ? 'Conferma Buy' : 'Conferma Sell'}
+                </button>
+                <button
+                  onClick={() => setPendingTradeConfirm(null)}
+                  disabled={submitting}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
+                >
+                  Annulla
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </section>
+  );
+}

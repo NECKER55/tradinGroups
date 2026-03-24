@@ -25,12 +25,22 @@ export function MainLayout() {
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                <span className="hidden text-sm text-canvas/70 md:inline">{user?.username}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-canvas/85">{user?.username}</span>
+                  <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-canvas/20 bg-canvas/10">
+                    {user?.photo_url ? (
+                      <img src={user.photo_url} alt="Profile" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="material-symbols-outlined text-base text-canvas/70">person</span>
+                    )}
+                  </div>
+                </div>
                 <button
                   onClick={() => void logout()}
-                  className="rounded-lg bg-signal px-4 py-2 text-sm font-bold text-obsidian transition-all hover:bg-signal/90"
+                  aria-label="Logout"
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-canvas/25 bg-canvas/10 text-canvas/75 transition-all hover:bg-canvas/15 hover:text-canvas"
                 >
-                  Logout
+                  <span className="material-symbols-outlined text-base">logout</span>
                 </button>
               </>
             ) : (

@@ -17,6 +17,11 @@ RETURNS TRIGGER AS $$
 DECLARE
   v_ricavo DECIMAL(18,6);
   v_prezzo_medio DECIMAL(18,2);
+  v_existing_num DECIMAL(18,6);
+  v_existing_price DECIMAL(18,6);
+  v_new_num DECIMAL(18,6);
+  v_weighted_total DECIMAL(36,12);
+  v_new_avg DECIMAL(18,6);
 BEGIN
   -- Attiva solo quando stato passa da Pending a Executed
   IF OLD.stato = 'Pending' AND NEW.stato = 'Executed' THEN
@@ -45,6 +50,43 @@ BEGIN
       UPDATE portafoglio
         SET liquidita = liquidita + v_ricavo
       WHERE id_portafoglio = NEW.id_portafoglio;
+    END IF;
+  END IF;
+
+  -- Se la transazione passa da Pending a Failed, ripristina quanto "riservato" in fase di creazione
+  IF OLD.stato = 'Pending' AND NEW.stato = 'Failed' THEN
+    -- Se era un Buy, riaccredita la liquidità inizialmente scalata
+    IF OLD.tipo = 'Buy' THEN
+      IF OLD.importo_investito IS NOT NULL THEN
+        UPDATE portafoglio
+          SET liquidita = liquidita + OLD.importo_investito
+        WHERE id_portafoglio = OLD.id_portafoglio;
+      END IF;
+
+    ELSIF OLD.tipo = 'Sell' THEN
+      -- Se era una vendita, riaccredita le azioni tolte al momento della creazione
+      IF OLD.quantita_azioni IS NOT NULL THEN
+        SELECT numero, prezzo_medio_acquisto
+          INTO v_existing_num, v_existing_price
+          FROM azioni_in_possesso
+         WHERE id_portafoglio = OLD.id_portafoglio
+           AND id_stock = OLD.id_stock;
+
+        IF FOUND THEN
+          v_new_num := v_existing_num + OLD.quantita_azioni;
+          v_weighted_total := (v_existing_num * v_existing_price) + (OLD.quantita_azioni * COALESCE(OLD.prezzo_esecuzione, v_existing_price));
+          v_new_avg := v_weighted_total / v_new_num;
+
+          UPDATE azioni_in_possesso
+            SET numero = v_new_num,
+                prezzo_medio_acquisto = v_new_avg
+          WHERE id_portafoglio = OLD.id_portafoglio
+            AND id_stock = OLD.id_stock;
+        ELSE
+          INSERT INTO azioni_in_possesso (id_portafoglio, id_stock, numero, prezzo_medio_acquisto)
+          VALUES (OLD.id_portafoglio, OLD.id_stock, OLD.quantita_azioni, COALESCE(OLD.prezzo_esecuzione, 0));
+        END IF;
+      END IF;
     END IF;
   END IF;
 

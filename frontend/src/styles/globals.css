@@ -10,10 +10,21 @@ body {
   margin: 0;
   min-width: 320px;
   font-family: 'Space Grotesk', sans-serif;
-  background: radial-gradient(circle at 20% 0%, #123f4a 0%, #080a0c 44%, #050506 100%);
+  background: radial-gradient(circle at 20% 0%, #4a237e 0%, #110d1f 42%, #060509 100%);
   color: #edf2f7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 30rem at 10% -5%, rgba(168, 85, 247, 0.18), transparent 60%),
+    radial-gradient(42rem 24rem at 85% 10%, rgba(139, 92, 246, 0.12), transparent 70%);
+  z-index: -1;
 }
 
 * {
@@ -32,16 +43,34 @@ body {
 .neo-card {
   background: rgba(16, 20, 24, 0.5);
   border: 1px solid rgba(237, 242, 247, 0.09);
-  box-shadow: 0 0 18px rgba(79, 209, 197, 0.12);
+  box-shadow: 0 0 18px rgba(168, 85, 247, 0.14);
 }
 
 .neo-card:hover {
-  border-color: rgba(246, 173, 85, 0.4);
-  box-shadow: 0 0 32px rgba(246, 173, 85, 0.2);
+  border-color: rgba(168, 85, 247, 0.45);
+  box-shadow: 0 0 32px rgba(168, 85, 247, 0.25);
 }
 
 .glow-signal {
-  text-shadow: 0 0 10px rgba(246, 173, 85, 0.45);
+  text-shadow: 0 0 12px rgba(168, 85, 247, 0.55);
+}
+
+.violet-underlight {
+  position: relative;
+}
+
+.violet-underlight::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -18px;
+  height: 42px;
+  border-radius: 9999px;
+  background: radial-gradient(ellipse at center, rgba(168, 85, 247, 0.33) 0%, rgba(168, 85, 247, 0.08) 40%, transparent 75%);
+  filter: blur(14px);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .animate-rise-in {

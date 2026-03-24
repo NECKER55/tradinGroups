@@ -72,7 +72,7 @@ function withAuthHeaders(init: RequestInit = {}): RequestInit {
   };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, withAuthHeaders(init));
 
   if (response.status === 401 && path !== ROUTES.AUTH.REFRESH) {
@@ -104,33 +104,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function register(payload: RegisterPayload): Promise<AuthResponse> {
-  return request<AuthResponse>(ROUTES.AUTH.REGISTER, {
+  return apiRequest<AuthResponse>(ROUTES.AUTH.REGISTER, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export async function login(payload: LoginPayload): Promise<AuthResponse> {
-  return request<AuthResponse>(ROUTES.AUTH.LOGIN, {
+  return apiRequest<AuthResponse>(ROUTES.AUTH.LOGIN, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export async function refresh(): Promise<{ access_token: string }> {
-  return request<{ access_token: string }>(ROUTES.AUTH.REFRESH, {
+  return apiRequest<{ access_token: string }>(ROUTES.AUTH.REFRESH, {
     method: 'POST',
   });
 }
 
 export async function me(): Promise<User> {
-  return request<User>(ROUTES.AUTH.ME, {
+  return apiRequest<User>(ROUTES.AUTH.ME, {
     method: 'GET',
   });
 }
 
 export async function logout(): Promise<void> {
-  await request<{ message: string }>(ROUTES.AUTH.LOGOUT, {
+  await apiRequest<{ message: string }>(ROUTES.AUTH.LOGOUT, {
     method: 'POST',
   });
 }

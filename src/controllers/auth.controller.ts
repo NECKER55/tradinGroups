@@ -149,7 +149,8 @@ export async function login(req: Request, res: Response): Promise<void> {
 // Rilascia un nuovo access token usando il refresh token in cookie.
 
 export async function refresh(req: Request, res: Response): Promise<void> {
-  const token = req.cookies?.refresh_token as string | undefined;
+  // Compatibilità: accetta sia il cookie legacy `refreshToken` sia quello corrente `refresh_token`.
+  const token = (req.cookies?.refresh_token ?? req.cookies?.refreshToken) as string | undefined;
 
   if (!token) {
     res.status(401).json({ error: 'NO_REFRESH_TOKEN', message: 'Refresh token mancante.' });
@@ -187,6 +188,7 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 
 export async function logout(_req: Request, res: Response): Promise<void> {
   res.clearCookie('refresh_token', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
+  res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production' });
   res.json({ message: 'Logout effettuato.' });
 }
 

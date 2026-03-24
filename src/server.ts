@@ -16,7 +16,25 @@ const app  = express();
 const PORT = parseInt(process.env.PORT ?? '3000');
 
 // ─── Security ─────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      fontSrc: ["'self'", 'https:', 'data:'],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'", 'https:', "'unsafe-inline'", "'unsafe-eval'", 'https://s3.tradingview.com', 'https://*.tradingview.com', 'https://www.tradingview.com'],
+      scriptSrcAttr: ["'none'"],
+      styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
+      connectSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview-widget.com', 'wss://*.tradingview.com'],
+      frameSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview.com', 'https://www.tradingview-widget.com', 'https://*.tradingview-widget.com'],
+      upgradeInsecureRequests: [],
+    },
+  },
+}));
 app.use(cors({
   origin:      process.env.FRONTEND_URL ?? 'http://localhost:5173',
   credentials: true, // necessario per i cookie HttpOnly del refresh token

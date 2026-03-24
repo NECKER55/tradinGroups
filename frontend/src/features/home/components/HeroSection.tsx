@@ -1,7 +1,7 @@
 export function HeroSection() {
   return (
     <section className="mx-auto max-w-7xl px-6 py-12">
-      <div className="mb-12 flex flex-col items-center gap-6 text-center animate-rise-in">
+      <div className="violet-underlight mb-12 flex flex-col items-center gap-6 text-center animate-rise-in">
         <h1 className="text-4xl font-black tracking-tight text-canvas md:text-6xl">
           Find Your <span className="text-signal">Squad</span>
         </h1>
@@ -10,7 +10,7 @@ export function HeroSection() {
         </p>
 
         <div className="group relative w-full max-w-2xl">
-          <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-signal via-alert to-ocean blur opacity-30 transition-opacity group-hover:opacity-60" />
+          <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-[#7c3aed] via-[#a855f7] to-[#6366f1] blur opacity-35 transition-opacity group-hover:opacity-65" />
           <div className="relative flex items-center overflow-hidden rounded-2xl border border-canvas/15 bg-ink p-1.5">
             <span className="material-symbols-outlined ml-4 text-canvas/45">search</span>
             <input
