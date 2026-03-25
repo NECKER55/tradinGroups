@@ -37,6 +37,18 @@ const ChangeUsernameSchema = z.object({
   username: z.string().trim().min(3).max(50),
 });
 
+const ChangePhotoSchema = z.object({
+  photo_url: z.union([
+    z.string().trim().url().max(255),
+    z.literal(''),
+    z.null(),
+  ]).optional(),
+});
+
+const ChangeEmailSchema = z.object({
+  email: z.string().trim().email('Email non valida.').max(100),
+});
+
 // ─── POST /api/auth/register ──────────────────────────────────
 
 export async function register(req: Request, res: Response): Promise<void> {
@@ -199,7 +211,18 @@ export async function me(req: Request, res: Response): Promise<void> {
 
   const persona = await prisma.persona.findUnique({
     where:  { id_persona: sub },
-    select: { id_persona: true, username: true, photo_url: true, is_superuser: true, is_banned: true },
+    select: {
+      id_persona: true,
+      username: true,
+      photo_url: true,
+      is_superuser: true,
+      is_banned: true,
+      credenziali: {
+        select: {
+          email: true,
+        },
+      },
+    },
   });
 
   if (!persona) {
@@ -207,7 +230,14 @@ export async function me(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  res.json(persona);
+  res.json({
+    id_persona: persona.id_persona,
+    username: persona.username,
+    photo_url: persona.photo_url,
+    is_superuser: persona.is_superuser,
+    is_banned: persona.is_banned,
+    email: persona.credenziali?.email ?? null,
+  });
 }
 
 export async function changeMyPassword(req: Request, res: Response): Promise<void> {
@@ -376,6 +406,116 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
     res.status(500).json({
       error: 'USERNAME_UPDATE_FAILED',
       message: 'Impossibile aggiornare il nome utente.',
+    });
+  }
+}
+
+export async function changeMyPhoto(req: Request, res: Response): Promise<void> {
+  const parsed = ChangePhotoSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const photoUrl = (() => {
+    const raw = parsed.data.photo_url;
+    if (raw === undefined || raw === null) return null;
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  })();
+
+  try {
+    const updated = await prisma.persona.update({
+      where: { id_persona: sub },
+      data: {
+        photo_url: photoUrl,
+      },
+      select: {
+        id_persona: true,
+        username: true,
+        photo_url: true,
+        is_superuser: true,
+        is_banned: true,
+      },
+    });
+
+    res.json({
+      message: 'Foto profilo aggiornata con successo.',
+      user: updated,
+    });
+  } catch {
+    res.status(500).json({
+      error: 'PHOTO_UPDATE_FAILED',
+      message: 'Impossibile aggiornare la foto profilo.',
+    });
+  }
+}
+
+export async function changeMyEmail(req: Request, res: Response): Promise<void> {
+  const parsed = ChangeEmailSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const nextEmail = parsed.data.email;
+
+  const currentCreds = await prisma.credenziali.findUnique({
+    where: { id_persona: sub },
+    select: { email: true },
+  });
+
+  if (!currentCreds) {
+    res.status(404).json({
+      error: 'USER_NOT_FOUND',
+      message: 'Utente non trovato.',
+    });
+    return;
+  }
+
+  if (currentCreds.email === nextEmail) {
+    res.status(409).json({
+      error: 'EMAIL_UNCHANGED',
+      message: 'La nuova email coincide con quella attuale.',
+    });
+    return;
+  }
+
+  try {
+    await prisma.credenziali.update({
+      where: { id_persona: sub },
+      data: { email: nextEmail },
+    });
+
+    res.json({
+      message: 'Email aggiornata con successo.',
+      email: nextEmail,
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2002'
+    ) {
+      res.status(409).json({
+        error: 'EMAIL_IN_USE',
+        message: 'Email gia in uso.',
+      });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'EMAIL_UPDATE_FAILED',
+      message: 'Impossibile aggiornare la email.',
     });
   }
 }

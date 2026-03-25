@@ -15,17 +15,17 @@ export function MainLayout() {
             <h2 className="text-xl font-black uppercase tracking-tight text-canvas">TradingArena</h2>
           </Link>
 
-          <div className="hidden items-center gap-10 md:flex">
-            <a className="text-sm font-semibold transition-colors hover:text-signal" href="#">Markets</a>
-            <a className="text-sm font-semibold text-signal" href="#">Leagues</a>
-            <a className="text-sm font-semibold transition-colors hover:text-signal" href="#">Social</a>
-            <a className="text-sm font-semibold transition-colors hover:text-signal" href="#">Insights</a>
-          </div>
+          {isAuthenticated ? (
+            <div className="hidden items-center gap-10 md:flex">
+              <Link className="text-sm font-semibold transition-colors hover:text-signal" to="/social">Social</Link>
+              <Link className="text-sm font-semibold transition-colors hover:text-signal" to="/#private-area">Private Area</Link>
+            </div>
+          ) : <div className="hidden md:block" />}
 
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
-                <div className="flex items-center gap-2">
+                <Link to="/social?account=1" className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition-colors hover:bg-canvas/10">
                   <span className="text-base font-bold text-canvas/85">{user?.username}</span>
                   <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-canvas/20 bg-canvas/10">
                     {user?.photo_url ? (
@@ -34,7 +34,7 @@ export function MainLayout() {
                       <span className="material-symbols-outlined text-base text-canvas/70">person</span>
                     )}
                   </div>
-                </div>
+                </Link>
                 <button
                   onClick={() => void logout()}
                   aria-label="Logout"

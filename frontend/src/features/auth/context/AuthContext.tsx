@@ -18,6 +18,7 @@ interface AuthContextValue {
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -70,6 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setAccessToken(null);
         setUser(null);
       }
+    },
+    refreshProfile: async () => {
+      const profile = await me();
+      setUser(profile);
     },
   }), [loading, user]);
 

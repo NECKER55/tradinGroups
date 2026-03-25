@@ -24,8 +24,9 @@ const GroupSearchQuerySchema = z.object({
 
 const CreateGroupSchema = z.object({
   nome: z.string().trim().min(3).max(100),
-  privacy: z.enum(['Public', 'Private']),
+  privacy: z.enum(['Public', 'Private']).default('Private'),
   photo_url: z.string().trim().url().max(255).optional(),
+  descrizione: z.string().trim().max(1000).optional(),
   budget_iniziale: z.union([z.number(), z.string()]).optional(),
 });
 
@@ -63,6 +64,10 @@ const UpdateGroupPrivacySchema = z.object({
 
 const UpdateGroupNameSchema = z.object({
   nome: z.string().trim().min(3).max(100),
+});
+
+const UpdateGroupDescriptionSchema = z.object({
+  descrizione: z.string().trim().max(1000).optional(),
 });
 
 function parsePositiveBudget(raw: string | number | undefined): Prisma.Decimal {
@@ -120,6 +125,8 @@ async function getGroupReadContext(id_gruppo: number, requesterId: number | null
       nome: true,
       privacy: true,
       photo_url: true,
+      descrizione: true,
+      budget_iniziale: true,
     },
   });
 
@@ -168,7 +175,7 @@ export async function createGroup(req: Request, res: Response): Promise<void> {
   }
 
   const { sub } = (req as AuthRequest).user;
-  const ownerBudget = (() => {
+  const groupInitialBudget = (() => {
     try {
       return parsePositiveBudget(parsed.data.budget_iniziale);
     } catch {
@@ -176,7 +183,7 @@ export async function createGroup(req: Request, res: Response): Promise<void> {
     }
   })();
 
-  if (!ownerBudget) {
+  if (!groupInitialBudget) {
     res.status(400).json({
       error: 'VALIDATION_ERROR',
       message: 'budget_iniziale non valido.',
@@ -191,6 +198,8 @@ export async function createGroup(req: Request, res: Response): Promise<void> {
           nome: parsed.data.nome,
           privacy: parsed.data.privacy,
           photo_url: parsed.data.photo_url,
+          descrizione: parsed.data.descrizione ? parsed.data.descrizione.trim() : null,
+          budget_iniziale: groupInitialBudget,
         },
       });
 
@@ -199,7 +208,7 @@ export async function createGroup(req: Request, res: Response): Promise<void> {
           id_persona: sub,
           id_gruppo: group.id_gruppo,
           ruolo: 'Owner',
-          budget_iniziale: ownerBudget,
+          budget_iniziale: groupInitialBudget,
         },
       });
 
@@ -839,6 +848,8 @@ export async function getMyPendingGroupInvites(req: Request, res: Response): Pro
           nome: true,
           privacy: true,
           photo_url: true,
+          descrizione: true,
+          budget_iniziale: true,
         },
       },
       mittente: {
@@ -861,6 +872,48 @@ export async function getMyPendingGroupInvites(req: Request, res: Response): Pro
       data_invito: invite.data_invito,
       gruppo: invite.gruppo,
       mittente: invite.mittente,
+    })),
+  });
+}
+
+export async function getMySentGroupInvites(req: Request, res: Response): Promise<void> {
+  const { sub } = (req as AuthRequest).user;
+
+  const invites = await prisma.invito_Gruppo.findMany({
+    where: {
+      id_mittente: sub,
+    },
+    include: {
+      gruppo: {
+        select: {
+          id_gruppo: true,
+          nome: true,
+          privacy: true,
+          photo_url: true,
+          descrizione: true,
+          budget_iniziale: true,
+        },
+      },
+      invitato: {
+        select: {
+          id_persona: true,
+          username: true,
+          photo_url: true,
+        },
+      },
+    },
+    orderBy: {
+      data_invito: 'desc',
+    },
+  });
+
+  res.json({
+    count: invites.length,
+    invites: invites.map((invite) => ({
+      id_gruppo: invite.id_gruppo,
+      data_invito: invite.data_invito,
+      gruppo: invite.gruppo,
+      invitato: invite.invitato,
     })),
   });
 }
@@ -893,6 +946,14 @@ export async function acceptGroupInvite(req: Request, res: Response): Promise<vo
       id_invitato: sub,
       id_gruppo,
     },
+    include: {
+      gruppo: {
+        select: {
+          id_gruppo: true,
+          budget_iniziale: true,
+        },
+      },
+    },
   });
 
   if (!invite) {
@@ -916,7 +977,7 @@ export async function acceptGroupInvite(req: Request, res: Response): Promise<vo
         id_persona: sub,
         id_gruppo,
         ruolo: 'User',
-        budget_iniziale: new Prisma.Decimal(0),
+        budget_iniziale: invite.gruppo.budget_iniziale,
       },
     });
   });
@@ -1054,6 +1115,8 @@ export async function getGroupPublicProfile(req: Request, res: Response): Promis
       nome: readContext.group.nome,
       photo_url: readContext.group.photo_url,
       privacy: readContext.group.privacy,
+      descrizione: readContext.group.descrizione,
+      budget_iniziale: readContext.group.budget_iniziale.toString(),
     },
   });
 }
@@ -1103,6 +1166,8 @@ export async function searchGroupsByName(req: Request, res: Response): Promise<v
     nome: string;
     privacy: 'Public' | 'Private';
     photo_url: string | null;
+    descrizione: string | null;
+    budget_iniziale: Prisma.Decimal;
     is_member: boolean;
   }>>(Prisma.sql`
     SELECT
@@ -1110,6 +1175,8 @@ export async function searchGroupsByName(req: Request, res: Response): Promise<v
       g.nome,
       g.privacy,
       g.photo_url,
+      g.descrizione,
+      g.budget_iniziale,
       ${isMemberSelect} AS is_member
     FROM gruppo g
     WHERE lower(g.nome) LIKE ${`${term}%`}
@@ -1121,7 +1188,10 @@ export async function searchGroupsByName(req: Request, res: Response): Promise<v
   res.json({
     q: parsed.data.q,
     count: groups.length,
-    results: groups,
+    results: groups.map((group) => ({
+      ...group,
+      budget_iniziale: group.budget_iniziale.toString(),
+    })),
   });
 }
 
@@ -1181,6 +1251,8 @@ export async function updateGroupPrivacy(req: Request, res: Response): Promise<v
       nome: true,
       privacy: true,
       photo_url: true,
+      descrizione: true,
+      budget_iniziale: true,
     },
   });
 
@@ -1247,6 +1319,8 @@ export async function updateGroupName(req: Request, res: Response): Promise<void
         nome: true,
         privacy: true,
         photo_url: true,
+        descrizione: true,
+        budget_iniziale: true,
       },
     });
 
@@ -1273,6 +1347,68 @@ export async function updateGroupName(req: Request, res: Response): Promise<void
   }
 }
 
+export async function updateGroupDescription(req: Request, res: Response): Promise<void> {
+  const parsedParams = GroupIdParamsSchema.safeParse(req.params);
+  const parsedBody = UpdateGroupDescriptionSchema.safeParse(req.body);
+
+  if (!parsedParams.success || !parsedBody.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsedParams.error?.errors[0]?.message
+        ?? parsedBody.error?.errors[0]?.message
+        ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_gruppo } = parsedParams.data;
+  const descrizione = parsedBody.data.descrizione?.trim() || null;
+
+  const group = await prisma.gruppo.findUnique({
+    where: { id_gruppo },
+    select: { id_gruppo: true },
+  });
+
+  if (!group) {
+    res.status(404).json({
+      error: 'GROUP_NOT_FOUND',
+      message: 'Gruppo non trovato.',
+    });
+    return;
+  }
+
+  const membership = await getMembershipOrNull(id_gruppo, sub);
+  if (!membership || membership.ruolo !== 'Owner') {
+    res.status(403).json({
+      error: 'ONLY_OWNER_CAN_UPDATE_GROUP',
+      message: 'Solo l\'owner puo modificare la descrizione del gruppo.',
+    });
+    return;
+  }
+
+  const updated = await prisma.gruppo.update({
+    where: { id_gruppo },
+    data: { descrizione },
+    select: {
+      id_gruppo: true,
+      nome: true,
+      privacy: true,
+      photo_url: true,
+      descrizione: true,
+      budget_iniziale: true,
+    },
+  });
+
+  res.json({
+    message: 'Descrizione gruppo aggiornata con successo.',
+    group: {
+      ...updated,
+      budget_iniziale: updated.budget_iniziale.toString(),
+    },
+  });
+}
+
 export async function getMyGroups(req: Request, res: Response): Promise<void> {
   const { sub } = (req as AuthRequest).user;
 
@@ -1287,6 +1423,8 @@ export async function getMyGroups(req: Request, res: Response): Promise<void> {
           nome: true,
           privacy: true,
           photo_url: true,
+          descrizione: true,
+          budget_iniziale: true,
         },
       },
     },
@@ -1304,6 +1442,8 @@ export async function getMyGroups(req: Request, res: Response): Promise<void> {
       nome: row.gruppo.nome,
       privacy: row.gruppo.privacy,
       photo_url: row.gruppo.photo_url,
+      descrizione: row.gruppo.descrizione,
+      budget_iniziale: row.gruppo.budget_iniziale.toString(),
       ruolo: row.ruolo,
     })),
   });

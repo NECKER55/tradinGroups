@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../api/stockTradingApi';
 import { TradingViewWidget } from '../components/TradingViewWidget';
 import { Highlight } from '../../../shared/ui/Highlight';
+import { gsap } from 'gsap';
 
 type TradeTab = 'buy' | 'sell';
 
@@ -55,6 +56,7 @@ export function StockDetailPage() {
   const [sellQty, setSellQty] = useState('1');
   const [submitting, setSubmitting] = useState(false);
   const [pendingTradeConfirm, setPendingTradeConfirm] = useState<TradeTab | null>(null);
+  const stockContainerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!pendingTradeConfirm) return;
@@ -108,6 +110,97 @@ export function StockDetailPage() {
       active = false;
     };
   }, [navigate, stockSymbol]);
+
+  useEffect(() => {
+    const root = stockContainerRef.current;
+    if (!root) return;
+
+    if (loading) {
+      root.classList.remove('social-glow-scope');
+      return;
+    }
+
+    const targets = Array.from(
+      root.querySelectorAll<HTMLElement>('button, .rounded-xl, .rounded-2xl, .violet-underlight, .stock-glow-card'),
+    ).filter((el) => !el.classList.contains('stock-glow-ignore'));
+
+    targets.forEach((el) => el.classList.add('social-glow-card'));
+
+    const proximity = 220;
+    const fadeDistance = 400;
+    let rafId: number | null = null;
+    let lastEvent: MouseEvent | null = null;
+
+    const updateGlow = () => {
+      if (!lastEvent) return;
+      const mouseX = lastEvent.clientX;
+      const mouseY = lastEvent.clientY;
+
+      gsap.set(root, {
+        '--spot-x': `${mouseX}px`,
+        '--spot-y': `${mouseY}px`,
+        '--spot-opacity': 1,
+      });
+
+      for (const el of targets) {
+        const rect = el.getBoundingClientRect();
+        const dx = Math.max(rect.left - mouseX, 0, mouseX - rect.right);
+        const dy = Math.max(rect.top - mouseY, 0, mouseY - rect.bottom);
+        const distance = Math.hypot(dx, dy);
+
+        let intensity = 0;
+        if (distance <= proximity) {
+          intensity = 1;
+        } else if (distance <= fadeDistance) {
+          intensity = (fadeDistance - distance) / (fadeDistance - proximity);
+        }
+
+        const relativeX = ((mouseX - rect.left) / rect.width) * 100;
+        const relativeY = ((mouseY - rect.top) / rect.height) * 100;
+
+        gsap.set(el, {
+          '--glow-intensity': Number(intensity.toFixed(3)),
+          '--glow-x': `${Math.max(0, Math.min(100, relativeX))}%`,
+          '--glow-y': `${Math.max(0, Math.min(100, relativeY))}%`,
+        });
+      }
+
+      rafId = null;
+    };
+
+    const onMouseMove = (event: MouseEvent) => {
+      lastEvent = event;
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(updateGlow);
+    };
+
+    const onMouseLeave = () => {
+      targets.forEach((el) => {
+        gsap.to(el, {
+          '--glow-intensity': 0,
+          duration: 0.25,
+          ease: 'power2.out',
+        });
+      });
+      gsap.to(root, {
+        '--spot-opacity': 0,
+        duration: 0.3,
+        ease: 'power2.out',
+      });
+    };
+
+    root.classList.add('social-glow-scope');
+    root.addEventListener('mousemove', onMouseMove);
+    root.addEventListener('mouseleave', onMouseLeave);
+
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      root.removeEventListener('mousemove', onMouseMove);
+      root.removeEventListener('mouseleave', onMouseLeave);
+      targets.forEach((el) => el.classList.remove('social-glow-card'));
+      root.classList.remove('social-glow-scope');
+    };
+  }, [loading]);
 
   const canSell = holdingQty > 0;
 
@@ -236,14 +329,14 @@ export function StockDetailPage() {
 
   if (loading) {
     return (
-      <section className="mx-auto max-w-[1440px] px-6 py-10 text-slate-300">
+      <section ref={stockContainerRef} className="mx-auto max-w-[1440px] px-6 py-10 text-slate-300">
         Caricamento dettaglio titolo...
       </section>
     );
   }
 
   return (
-    <section className="mx-auto max-w-[1440px] px-6 py-8 text-slate-100">
+    <section ref={stockContainerRef} className="mx-auto max-w-[1440px] px-6 py-8 text-slate-100">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <button
           onClick={() => navigate(-1)}
@@ -253,7 +346,7 @@ export function StockDetailPage() {
           <span className="material-symbols-outlined text-2xl">arrow_back</span>
         </button>
 
-        <Highlight trigger={cash} duration={550} className="group rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-500/15 via-[#1a1126] to-transparent px-5 py-3 shadow-[0_0_28px_rgba(139,92,246,0.16)]">
+        <Highlight trigger={cash} duration={550} className="group stock-glow-card rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-500/15 via-[#1a1126] to-transparent px-5 py-3 shadow-[0_0_28px_rgba(139,92,246,0.16)]">
           <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/80">Budget disponibile</p>
           <p className="text-2xl font-black text-white transition-colors duration-300 group-data-[highlight=on]:text-violet-200 md:text-3xl">{toCurrency(cash)}</p>
         </Highlight>
@@ -319,7 +412,7 @@ export function StockDetailPage() {
         </div>
 
         <div className="w-full shrink-0 lg:w-[380px]">
-          <div className="sticky top-24 overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f1a] shadow-2xl shadow-violet-500/10">
+          <div className="sticky top-24 overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f1a] shadow-2xl shadow-violet-500/10 stock-glow-card">
             <div className="border-b border-white/10 px-4 py-3">
               <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
                 {[
@@ -447,7 +540,7 @@ export function StockDetailPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 px-5"
+            className="fixed inset-0 z-[96] flex items-center justify-center bg-black/70 px-5"
           >
             <motion.div
               initial={{ opacity: 0, y: 28, scale: 0.96 }}

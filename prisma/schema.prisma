@@ -57,6 +57,8 @@ model Gruppo {
   nome      String        @unique @db.VarChar(100)
   privacy   GruppoPrivacy
   photo_url String?       @db.VarChar(255)
+  descrizione String?
+  budget_iniziale Decimal @default(0) @db.Decimal(18, 2)
 
   portafogli      Portafoglio[]
   membri          Membro_Gruppo[]

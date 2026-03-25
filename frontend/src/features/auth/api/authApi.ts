@@ -134,3 +134,35 @@ export async function logout(): Promise<void> {
     method: 'POST',
   });
 }
+
+export async function changeMyUsername(username: string): Promise<AuthResponse> {
+  return apiRequest<AuthResponse>(ROUTES.AUTH.CHANGE_USERNAME, {
+    method: 'PUT',
+    body: JSON.stringify({ username }),
+  });
+}
+
+export async function changeMyPassword(oldPassword: string, newPassword: string, confirmNewPassword: string): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(ROUTES.AUTH.CHANGE_PASSWORD, {
+    method: 'PUT',
+    body: JSON.stringify({
+      old_password: oldPassword,
+      new_password: newPassword,
+      confirm_new_password: confirmNewPassword,
+    }),
+  });
+}
+
+export async function changeMyPhoto(photoUrl: string | null): Promise<{ message: string; user: User }> {
+  return apiRequest<{ message: string; user: User }>(ROUTES.AUTH.CHANGE_PHOTO, {
+    method: 'PUT',
+    body: JSON.stringify({ photo_url: photoUrl }),
+  });
+}
+
+export async function changeMyEmail(email: string): Promise<{ message: string; email: string }> {
+  return apiRequest<{ message: string; email: string }>(ROUTES.AUTH.CHANGE_EMAIL, {
+    method: 'PUT',
+    body: JSON.stringify({ email }),
+  });
+}

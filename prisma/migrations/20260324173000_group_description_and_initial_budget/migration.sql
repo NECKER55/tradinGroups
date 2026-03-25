@@ -1,0 +1,3 @@
+ALTER TABLE gruppo
+  ADD COLUMN descrizione TEXT,
+  ADD COLUMN budget_iniziale DECIMAL(18,2) NOT NULL DEFAULT 0;

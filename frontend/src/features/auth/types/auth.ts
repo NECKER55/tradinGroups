@@ -1,6 +1,7 @@
 export interface User {
   id_persona: number;
   username: string;
+  email?: string | null;
   photo_url?: string | null;
   is_superuser: boolean;
   is_banned?: boolean;

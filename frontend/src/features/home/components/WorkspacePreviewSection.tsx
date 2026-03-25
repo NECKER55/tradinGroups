@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/context/AuthContext';
+import Counter from '../../../shared/components/Counter';
 import {
   BalanceHistoryPoint,
   cancelPendingOrder,
@@ -126,15 +127,42 @@ export function WorkspacePreviewSection() {
   const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!pendingBalanceAction) return;
+    const isBlockingOverlayOpen = Boolean(isFundsPanelOpen || pendingBalanceAction);
+    if (!isBlockingOverlayOpen) return;
 
-    const previous = document.body.style.overflow;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
-    return () => {
-      document.body.style.overflow = previous;
+    const blockedKeys = new Set([
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'PageUp',
+      'PageDown',
+      'Home',
+      'End',
+      ' ',
+    ]);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isFundsPanelOpen) {
+        setIsFundsPanelOpen(false);
+        return;
+      }
+
+      if (blockedKeys.has(event.key)) {
+        event.preventDefault();
+      }
     };
-  }, [pendingBalanceAction]);
+
+    window.addEventListener('keydown', onKeyDown, { passive: false });
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFundsPanelOpen, pendingBalanceAction]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -318,7 +346,7 @@ export function WorkspacePreviewSection() {
   if (!isAuthenticated) return null;
 
   return (
-    <section className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-8">
+    <section id="private-area" className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-8">
       <div className="flex items-center gap-4">
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
         <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-violet-300/80">Personal Workspace</span>
@@ -367,7 +395,22 @@ export function WorkspacePreviewSection() {
         <div className="space-y-1">
           <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Total Wealth</p>
           <div className="flex items-baseline gap-3">
-            <h2 className="text-4xl font-bold tracking-tight text-slate-100 md:text-5xl">{toCurrency(totalWealth)}</h2>
+            <h2 className="flex items-center text-4xl font-bold tracking-tight text-slate-100 md:text-5xl">
+              <span className="mr-1">$</span>
+              <Counter
+                value={totalWealth}
+                fontSize={44}
+                padding={4}
+                gap={1}
+                textColor="rgb(241 245 249)"
+                fontWeight={800}
+                digitPlaceHolders
+                gradientHeight={8}
+                gradientFrom="rgba(17, 24, 39, 0.6)"
+                gradientTo="transparent"
+                counterStyle={{ paddingLeft: 0, paddingRight: 0 }}
+              />
+            </h2>
             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${positiveDelta ? 'bg-violet-500/10 text-violet-400' : 'bg-rose-500/10 text-rose-400'}`}>
               <span className="material-symbols-outlined mr-1 text-sm">{positiveDelta ? 'trending_up' : 'trending_down'}</span>
               {positiveDelta ? '+' : ''}{delta.toFixed(2)}%
@@ -375,7 +418,22 @@ export function WorkspacePreviewSection() {
           </div>
           <div className="flex items-center gap-2 pt-2">
             <p className="text-sm text-slate-500">Cash Balance:</p>
-            <p className="text-sm font-bold text-slate-100">{toCurrency(cash)}</p>
+            <p className="flex items-center text-sm font-bold text-slate-100">
+              <span className="mr-0.5">$</span>
+              <Counter
+                value={cash}
+                fontSize={16}
+                padding={2}
+                gap={1}
+                textColor="rgb(241 245 249)"
+                fontWeight={700}
+                digitPlaceHolders
+                gradientHeight={4}
+                gradientFrom="rgba(15, 15, 20, 0.8)"
+                gradientTo="transparent"
+                counterStyle={{ paddingLeft: 0, paddingRight: 0 }}
+              />
+            </p>
           </div>
         </div>
         <div className="relative w-full md:w-auto">
@@ -392,49 +450,69 @@ export function WorkspacePreviewSection() {
           <AnimatePresence>
             {isFundsPanelOpen ? (
               <motion.div
-                initial={{ opacity: 0, y: -14, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -14, scale: 0.98 }}
-                transition={{ duration: 0.28, ease: 'easeInOut' }}
-                className="absolute left-0 right-0 top-[calc(100%+10px)] z-40 rounded-2xl border border-violet-500/25 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40 md:left-auto md:w-[460px]"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => setIsFundsPanelOpen(false)}
+                className="fixed inset-0 z-[95] flex items-start justify-center bg-black/50 px-5 pt-28"
               >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Wallet Actions</p>
-                  <p className="text-sm text-slate-300">Imposta un importo e scegli se depositare o prelevare.</p>
-                </div>
-                <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-200">
-                  Secure Confirm
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={balanceAmount}
-                  onChange={(e) => setBalanceAmount(e.target.value)}
-                  className="h-11 w-full rounded-xl border border-[#1f1f2e] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
-                  placeholder="Importo"
-                />
-                <button
-                  onClick={() => requestBalanceAction('deposit')}
-                  disabled={balanceLoading}
-                  className="h-11 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-200 transition-all duration-300 hover:bg-emerald-500/20 disabled:opacity-70"
+                <motion.div
+                  initial={{ opacity: 0, y: -14, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -14, scale: 0.98 }}
+                  transition={{ duration: 0.28, ease: 'easeInOut' }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-[560px] rounded-2xl border border-violet-500/25 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40"
                 >
-                  Deposit
-                </button>
-                <button
-                  onClick={() => requestBalanceAction('withdraw')}
-                  disabled={balanceLoading}
-                  className="h-11 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 text-sm font-semibold text-amber-200 transition-all duration-300 hover:bg-amber-500/20 disabled:opacity-70"
-                >
-                  Withdraw
-                </button>
-              </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Wallet Actions</p>
+                      <p className="text-sm text-slate-300">Imposta un importo e scegli se depositare o prelevare.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-200">
+                        Secure Confirm
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsFundsPanelOpen(false)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-200 transition-colors hover:bg-violet-500/20"
+                        aria-label="Chiudi pannello fondi"
+                      >
+                        <span className="material-symbols-outlined text-lg leading-none">close</span>
+                      </button>
+                    </div>
+                  </div>
 
-              {balanceMessage ? <p className="mt-3 text-xs text-slate-300">{balanceMessage}</p> : null}
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto_auto]">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={balanceAmount}
+                      onChange={(e) => setBalanceAmount(e.target.value)}
+                      className="h-11 w-full rounded-xl border border-[#1f1f2e] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
+                      placeholder="Importo"
+                    />
+                    <button
+                      onClick={() => requestBalanceAction('deposit')}
+                      disabled={balanceLoading}
+                      className="h-11 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-200 transition-all duration-300 hover:bg-emerald-500/20 disabled:opacity-70"
+                    >
+                      Deposit
+                    </button>
+                    <button
+                      onClick={() => requestBalanceAction('withdraw')}
+                      disabled={balanceLoading}
+                      className="h-11 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 text-sm font-semibold text-amber-200 transition-all duration-300 hover:bg-amber-500/20 disabled:opacity-70"
+                    >
+                      Withdraw
+                    </button>
+                  </div>
+
+                  {balanceMessage ? <p className="mt-3 text-xs text-slate-300">{balanceMessage}</p> : null}
+                </motion.div>
               </motion.div>
             ) : null}
           </AnimatePresence>
@@ -448,7 +526,7 @@ export function WorkspacePreviewSection() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 px-5"
+            className="fixed inset-0 z-[98] flex items-center justify-center bg-black/70 px-5"
           >
             <motion.div
               initial={{ opacity: 0, y: 30, scale: 0.96 }}

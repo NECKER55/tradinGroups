@@ -9,6 +9,7 @@ import {
   getGroupRanking,
   getMyGroups,
   getMyPendingGroupInvites,
+  getMySentGroupInvites,
   inviteToGroup,
   leaveGroup,
   promoteMember,
@@ -17,6 +18,7 @@ import {
   searchGroupsByName,
   updateGroupName,
   updateGroupBudget,
+  updateGroupDescription,
   updateGroupPrivacy,
 } from '../controllers/groups.controller';
 import { authenticate, optionalAuth } from '../middleware/auth';
@@ -33,9 +35,11 @@ groupsRouter.get('/mine', authenticate, getMyGroups);
 groupsRouter.delete('/:id_gruppo', authenticate, deleteGroup);
 groupsRouter.patch('/:id_gruppo/privacy', authenticate, updateGroupPrivacy);
 groupsRouter.patch('/:id_gruppo/name', authenticate, updateGroupName);
+groupsRouter.patch('/:id_gruppo/description', authenticate, updateGroupDescription);
 
 groupsRouter.post('/:id_gruppo/invites', authenticate, inviteToGroup);
 groupsRouter.get('/invites/pending', authenticate, getMyPendingGroupInvites);
+groupsRouter.get('/invites/sent', authenticate, getMySentGroupInvites);
 groupsRouter.post('/invites/:id_gruppo/accept', authenticate, acceptGroupInvite);
 groupsRouter.post('/invites/:id_gruppo/reject', authenticate, rejectGroupInvite);
 

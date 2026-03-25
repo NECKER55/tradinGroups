@@ -12,7 +12,7 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 ## Users / Profilo
 - [x] Modifica username
 - [x] Modifica email
-- [ ] Modifica photo_url
+- [x] Modifica photo_url
 - [x] Cambio password
 
 ## Amicizie (Friends)
@@ -39,7 +39,7 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Modifica nome gruppo (owner)
 - [x] Modifica privacy gruppo (owner)
 - [ ] Modifica foto profilo gruppo (owner)
-- [ ] Modifica descrizione gruppo (owner)  (non esiste nello schema prisma)
+- [x] Modifica descrizione gruppo (owner)  (non esiste nello schema prisma)
 - [x] Elimina gruppo
 - [x] Modifica fondi membro (Admin/Owner)
 - [x] Classifica gruppo

@@ -77,7 +77,7 @@ export async function sendFriendRequest(req: Request, res: Response): Promise<vo
       const lockB = Math.max(sub, receiverId);
 
       // Lock deterministico per coppia utenti: evita race condition su richieste incrociate.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockA}, ${lockB})`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockA}::int, ${lockB}::int)`;
 
       const existing = await tx.amicizia.findFirst({
         where: {

@@ -28,11 +28,12 @@ export function TradingViewWidget({ symbol }: TradingViewWidgetProps) {
   }, [primarySymbol]);
 
   return (
-    <div className="tradingview-widget-container h-[500px] w-full overflow-hidden rounded-xl border border-white/10 bg-[#0f0f1a]">
+    <div className="tradingview-widget-container relative h-[500px] w-full overflow-hidden rounded-xl border border-white/10 bg-[#0f0f1a]">
       <iframe
+        key={primarySymbol}
         title={`TradingView ${primarySymbol}`}
         src={iframeSrc}
-        className="h-full w-full border-0"
+        className="absolute -top-3 left-0 h-[calc(100%+24px)] w-full border-0"
         loading="lazy"
       />
     </div>

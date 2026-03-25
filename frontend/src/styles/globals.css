@@ -87,3 +87,102 @@ body::before {
     transform: translateY(0);
   }
 }
+
+.social-glow {
+  position: relative;
+  isolation: isolate;
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-intensity: 0;
+  --glow-rgb: 132, 0, 255;
+}
+
+.social-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: var(--glow-intensity);
+  background: radial-gradient(
+    260px circle at var(--glow-x) var(--glow-y),
+    rgba(var(--glow-rgb), 0.24) 0%,
+    rgba(var(--glow-rgb), 0.1) 34%,
+    rgba(var(--glow-rgb), 0.04) 52%,
+    transparent 72%
+  );
+  transition: opacity 0.2s ease;
+  z-index: 0;
+}
+
+.social-glow > * {
+  position: relative;
+  z-index: 1;
+}
+
+.social-glow-scope {
+  position: relative;
+  isolation: isolate;
+  --spot-x: 50vw;
+  --spot-y: 50vh;
+  --spot-opacity: 0;
+}
+
+.social-glow-scope::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: var(--spot-opacity);
+  background:
+    radial-gradient(760px circle at var(--spot-x) var(--spot-y), rgba(132, 0, 255, 0.12) 0%, rgba(132, 0, 255, 0.05) 32%, transparent 64%),
+    radial-gradient(420px circle at var(--spot-x) var(--spot-y), rgba(132, 0, 255, 0.2) 0%, transparent 72%);
+  mix-blend-mode: screen;
+  transition: opacity 0.25s ease;
+}
+
+.social-glow-card {
+  position: relative;
+  isolation: isolate;
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-intensity: 0;
+  --glow-rgb: 132, 0, 255;
+}
+
+.social-overlay-panel {
+  position: absolute;
+}
+
+.social-glow-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: calc(var(--glow-intensity) * 0.9);
+  background: radial-gradient(220px circle at var(--glow-x) var(--glow-y), rgba(var(--glow-rgb), 0.22) 0%, rgba(var(--glow-rgb), 0.08) 36%, transparent 68%);
+}
+
+.social-glow-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  opacity: calc(var(--glow-intensity) * 0.95);
+  background: radial-gradient(320px circle at var(--glow-x) var(--glow-y), rgba(var(--glow-rgb), 0.9) 0%, rgba(var(--glow-rgb), 0.42) 30%, transparent 62%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+
+.social-glow-card > * {
+  position: relative;
+  z-index: 2;
+}
