@@ -5,7 +5,7 @@ const client_1 = require("@prisma/client");
 const prisma_1 = require("../lib/prisma");
 const finnhub_1 = require("../services/finnhub");
 const PROCESS_INTERVAL_MS = 60000;
-const MIN_PENDING_AGE_MS = 5 * 60000;
+const MIN_PENDING_AGE_MS = 20000;
 let isProcessing = false;
 async function processPendingOrders() {
     if (isProcessing)

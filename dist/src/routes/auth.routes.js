@@ -9,4 +9,8 @@ authRouter.post('/login', auth_controller_1.login);
 authRouter.post('/refresh', auth_controller_1.refresh);
 authRouter.post('/logout', auth_controller_1.logout);
 authRouter.get('/me', auth_1.authenticate, auth_controller_1.me);
+authRouter.put('/me/password', auth_1.authenticate, auth_controller_1.changeMyPassword);
+authRouter.put('/me/username', auth_1.authenticate, auth_controller_1.changeMyUsername);
+authRouter.put('/me/photo', auth_1.authenticate, auth_controller_1.changeMyPhoto);
+authRouter.put('/me/email', auth_1.authenticate, auth_controller_1.changeMyEmail);
 exports.default = authRouter;

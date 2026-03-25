@@ -8,6 +8,7 @@ import {
   type PrivateBalanceResponse,
   type WatchlistResponse,
 } from '../../home/api/personalWorkspaceApi';
+import { getGroupWorkspace } from '../../groups/api/groupDetailApi';
 
 export interface CreateOrderPayload {
   id_portafoglio: number;
@@ -59,7 +60,23 @@ export interface StockDetailBootstrap {
   watchlist: WatchlistResponse['results'];
 }
 
-export async function loadStockDetailBootstrap(): Promise<StockDetailBootstrap> {
+export interface StockPageContext {
+  scope: 'personal' | 'group';
+  groupId?: number;
+}
+
+export async function loadStockDetailBootstrap(context?: StockPageContext): Promise<StockDetailBootstrap> {
+  if (context?.scope === 'group' && Number.isFinite(context.groupId)) {
+    const groupData = await getGroupWorkspace(context.groupId as number);
+
+    return {
+      portfolioId: groupData.portfolio.id_portafoglio,
+      cash: Number(groupData.portfolio.liquidita) || 0,
+      holdings: groupData.holdings,
+      watchlist: groupData.watchlist,
+    };
+  }
+
   const privateBalance: PrivateBalanceResponse = await getPrivateBalance();
   const portfolioId = privateBalance.portfolio.id_portafoglio;
 

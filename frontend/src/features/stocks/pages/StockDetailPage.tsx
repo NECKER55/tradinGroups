@@ -6,11 +6,13 @@ import {
   createOrder,
   findHoldingForSymbol,
   loadStockDetailBootstrap,
+  type StockPageContext,
   removeFromWatchlist,
 } from '../api/stockTradingApi';
 import { TradingViewWidget } from '../components/TradingViewWidget';
 import { Highlight } from '../../../shared/ui/Highlight';
 import { gsap } from 'gsap';
+import Counter from '../../../shared/components/Counter';
 
 type TradeTab = 'buy' | 'sell';
 
@@ -20,6 +22,7 @@ interface StockRouteState {
     nome_societa: string;
     settore: string;
   };
+  context?: StockPageContext;
 }
 
 function toCurrency(value: number): string {
@@ -36,15 +39,16 @@ export function StockDetailPage() {
   const { symbol = '' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const state = (location.state as StockRouteState | null)?.stock;
+  const routeState = location.state as StockRouteState | null;
+  const state = routeState?.stock;
+  const pageContext = routeState?.context;
 
   const stockSymbol = symbol.toUpperCase();
   const stockName = state?.nome_societa ?? stockSymbol;
   const stockSector = state?.settore ?? 'Unknown sector';
 
   const [loading, setLoading] = useState(true);
-  const [banner, setBanner] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
 
   const [portfolioId, setPortfolioId] = useState<number | null>(null);
   const [cash, setCash] = useState(0);
@@ -57,6 +61,12 @@ export function StockDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [pendingTradeConfirm, setPendingTradeConfirm] = useState<TradeTab | null>(null);
   const stockContainerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3800);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   useEffect(() => {
     if (!pendingTradeConfirm) return;
@@ -79,10 +89,10 @@ export function StockDetailPage() {
 
     async function bootstrap() {
       setLoading(true);
-      setError(null);
+      setToast(null);
 
       try {
-        const data = await loadStockDetailBootstrap();
+        const data = await loadStockDetailBootstrap(pageContext);
         if (!active) return;
 
         const holding = findHoldingForSymbol(data.holdings, stockSymbol);
@@ -98,7 +108,8 @@ export function StockDetailPage() {
         }
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : 'Impossibile caricare i dettagli del titolo.');
+        const message = err instanceof Error ? err.message : 'Impossibile caricare i dettagli del titolo.';
+        setToast({ message, tone: 'error' });
       } finally {
         if (active) setLoading(false);
       }
@@ -109,7 +120,7 @@ export function StockDetailPage() {
     return () => {
       active = false;
     };
-  }, [navigate, stockSymbol]);
+  }, [navigate, pageContext, stockSymbol]);
 
   useEffect(() => {
     const root = stockContainerRef.current;
@@ -212,7 +223,7 @@ export function StockDetailPage() {
   }, [buyAmount]);
 
   async function refreshSnapshot() {
-    const data = await loadStockDetailBootstrap();
+    const data = await loadStockDetailBootstrap(pageContext);
     const holding = findHoldingForSymbol(data.holdings, stockSymbol);
     const isInWatchlist = data.watchlist.some((item) => item.id_stock.toUpperCase() === stockSymbol);
 
@@ -223,32 +234,32 @@ export function StockDetailPage() {
   }
 
   async function handleToggleWatchlist() {
-    setError(null);
-    setBanner(null);
+    setToast(null);
     try {
       if (watchlisted) {
         await removeFromWatchlist(stockSymbol);
         setWatchlisted(false);
-        setBanner('Titolo rimosso dalla watchlist.');
+        setToast({ message: 'Titolo rimosso dalla watchlist.', tone: 'success' });
       } else {
         await addToWatchlist(stockSymbol);
         setWatchlisted(true);
-        setBanner('Titolo aggiunto alla watchlist.');
+        setToast({ message: 'Titolo aggiunto alla watchlist.', tone: 'success' });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Operazione watchlist non riuscita.');
+      const message = err instanceof Error ? err.message : 'Operazione watchlist non riuscita.';
+      setToast({ message, tone: 'error' });
     }
   }
 
   function validateBuyBeforeConfirm(): boolean {
     const amount = Number(buyAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError('Inserisci un importo buy valido.');
+      setToast({ message: 'Inserisci un importo buy valido.', tone: 'error' });
       return false;
     }
 
     if (amount > cash) {
-      setError('Budget insufficiente per questo acquisto.');
+      setToast({ message: 'Budget insufficiente per questo acquisto.', tone: 'error' });
       return false;
     }
 
@@ -260,8 +271,7 @@ export function StockDetailPage() {
 
     const amount = Number(buyAmount);
     setSubmitting(true);
-    setError(null);
-    setBanner(null);
+    setToast(null);
 
     try {
       await createOrder({
@@ -272,10 +282,11 @@ export function StockDetailPage() {
       });
 
       setPendingTradeConfirm(null);
-      setBanner('Ordine di acquisto inviato con successo.');
+      setToast({ message: 'Ordine di acquisto inviato con successo.', tone: 'success' });
       await refreshSnapshot();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di acquisto.');
+      const message = err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di acquisto.';
+      setToast({ message, tone: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -284,12 +295,12 @@ export function StockDetailPage() {
   function validateSellBeforeConfirm(): boolean {
     const quantity = Number(sellQty);
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError('Inserisci una quantita valida da vendere.');
+      setToast({ message: 'Inserisci una quantita valida da vendere.', tone: 'error' });
       return false;
     }
 
     if (quantity > holdingQty) {
-      setError('Non possiedi abbastanza azioni per questa vendita.');
+      setToast({ message: 'Non possiedi abbastanza azioni per questa vendita.', tone: 'error' });
       return false;
     }
 
@@ -302,8 +313,7 @@ export function StockDetailPage() {
     const quantity = Number(sellQty);
 
     setSubmitting(true);
-    setError(null);
-    setBanner(null);
+    setToast(null);
 
     try {
       await createOrder({
@@ -314,10 +324,11 @@ export function StockDetailPage() {
       });
 
       setPendingTradeConfirm(null);
-      setBanner('Ordine di vendita inviato con successo.');
+      setToast({ message: 'Ordine di vendita inviato con successo.', tone: 'success' });
       await refreshSnapshot();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di vendita.');
+      const message = err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di vendita.';
+      setToast({ message, tone: 'error' });
     } finally {
       setSubmitting(false);
     }
@@ -341,42 +352,30 @@ export function StockDetailPage() {
         <button
           onClick={() => navigate(-1)}
           aria-label="Torna indietro"
-          className="inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
+          className="stock-glow-ignore inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
         >
           <span className="material-symbols-outlined text-2xl">arrow_back</span>
         </button>
 
         <Highlight trigger={cash} duration={550} className="group stock-glow-card rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-500/15 via-[#1a1126] to-transparent px-5 py-3 shadow-[0_0_28px_rgba(139,92,246,0.16)]">
           <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/80">Budget disponibile</p>
-          <p className="text-2xl font-black text-white transition-colors duration-300 group-data-[highlight=on]:text-violet-200 md:text-3xl">{toCurrency(cash)}</p>
+          <div className="text-2xl font-black text-white transition-colors duration-300 group-data-[highlight=on]:text-violet-200 md:text-3xl">
+            <Counter
+              value={cash}
+              fontSize={32}
+              padding={2}
+              gap={1}
+              textColor="rgb(255 255 255)"
+              fontWeight={800}
+              digitPlaceHolders
+              gradientHeight={6}
+              gradientFrom="rgba(17, 24, 39, 0.55)"
+              gradientTo="transparent"
+              counterStyle={{ paddingLeft: 0, paddingRight: 0 }}
+            />
+          </div>
         </Highlight>
       </div>
-
-      <AnimatePresence mode="wait">
-        {banner ? (
-          <motion.div
-            key="stock-banner"
-            initial={{ opacity: 0, y: -12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.24, ease: 'easeOut' }}
-            className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
-          >
-            {banner}
-          </motion.div>
-        ) : error ? (
-          <motion.div
-            key="stock-error"
-            initial={{ opacity: 0, y: -12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.24, ease: 'easeOut' }}
-            className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-          >
-            {error}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
 
       <div className="flex flex-col gap-8 lg:flex-row">
         <div className="flex-1 space-y-6">
@@ -390,11 +389,17 @@ export function StockDetailPage() {
                   <h2 className="text-3xl font-bold">{stockSymbol}</h2>
                   <button
                     onClick={() => void handleToggleWatchlist()}
-                    className="material-symbols-outlined text-2xl text-yellow-400"
-                    style={{ fontVariationSettings: `'FILL' ${watchlisted ? 1 : 0}` }}
+                    className="inline-flex items-center justify-center"
                     aria-label="Toggle watchlist"
                   >
-                    star
+                    <motion.span
+                      className="material-symbols-outlined text-2xl text-yellow-400"
+                      style={{ fontVariationSettings: `'FILL' ${watchlisted ? 1 : 0}` }}
+                      animate={{ scale: watchlisted ? [1, 1.16, 1] : [1, 0.88, 1], rotate: watchlisted ? [0, 8, 0] : [0, -8, 0] }}
+                      transition={{ duration: 0.28, ease: 'easeInOut' }}
+                    >
+                      star
+                    </motion.span>
                   </button>
                 </div>
                 <p className="text-sm text-slate-400">{stockName} • {stockSector}</p>
@@ -474,7 +479,7 @@ export function StockDetailPage() {
                   <button
                     onClick={() => {
                       if (validateBuyBeforeConfirm()) {
-                        setError(null);
+                        setToast(null);
                         setPendingTradeConfirm('buy');
                       }
                     }}
@@ -505,7 +510,7 @@ export function StockDetailPage() {
                   <button
                     onClick={() => {
                       if (validateSellBeforeConfirm()) {
-                        setError(null);
+                        setToast(null);
                         setPendingTradeConfirm('sell');
                       }
                     }}
@@ -532,6 +537,29 @@ export function StockDetailPage() {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {toast ? (
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 18 }}
+            className={`fixed bottom-4 right-4 z-[120] w-[min(520px,90vw)] rounded-xl border px-4 py-3 shadow-[0_12px_30px_rgba(0,0,0,0.45)] backdrop-blur ${toast.tone === 'success' ? 'border-violet-500/35 bg-[#141529]/95 text-violet-100' : 'border-rose-500/35 bg-[#26131b]/95 text-rose-100'}`}
+          >
+            <div className="flex items-start gap-3">
+              <span className={`material-symbols-outlined mt-0.5 ${toast.tone === 'success' ? 'text-violet-300' : 'text-rose-300'}`}>{toast.tone === 'success' ? 'check_circle' : 'error'}</span>
+              <p className="flex-1 text-sm">{toast.message}</p>
+              <button
+                onClick={() => setToast(null)}
+                className="grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-white/10"
+                aria-label="Chiudi notifica"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>
         {pendingTradeConfirm ? (

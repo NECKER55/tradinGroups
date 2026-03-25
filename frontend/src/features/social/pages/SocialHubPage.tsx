@@ -19,6 +19,8 @@ import {
   acceptFriendRequest,
   acceptGroupInvite,
   blockFriendUser,
+  cancelSentFriendRequest,
+  cancelSentGroupInvite,
   createGroup,
   getMyFriendships,
   getMyGroups,
@@ -115,6 +117,7 @@ export function SocialHubPage() {
 
   const [friendActionId, setFriendActionId] = useState<number | null>(null);
   const [inviteActionId, setInviteActionId] = useState<number | null>(null);
+  const [sentGroupInviteActionKey, setSentGroupInviteActionKey] = useState<string | null>(null);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -280,6 +283,15 @@ export function SocialHubPage() {
       document.body.style.overflow = previous;
     };
   }, [blockingTarget, createModalOpen, accountModalOpen]);
+
+  useEffect(() => {
+    if (!banner && !loadingError) return;
+    const timer = window.setTimeout(() => {
+      setBanner(null);
+      setLoadingError(null);
+    }, 3800);
+    return () => window.clearTimeout(timer);
+  }, [banner, loadingError]);
 
   useEffect(() => {
     if (!requestsOpen && !invitesOpen) return;
@@ -677,6 +689,15 @@ export function SocialHubPage() {
     setFriendActionId(null);
   }
 
+  async function handleCancelSentRequest(idPersona: number) {
+    setFriendActionId(idPersona);
+    await withAction(async () => {
+      const res = await cancelSentFriendRequest(idPersona);
+      setBanner(res.message);
+    });
+    setFriendActionId(null);
+  }
+
   async function handleConfirmBlock() {
     if (!blockingTarget) return;
 
@@ -706,6 +727,16 @@ export function SocialHubPage() {
       setBanner(res.message);
     });
     setInviteActionId(null);
+  }
+
+  async function handleCancelSentGroupInvite(idGruppo: number, idPersona: number) {
+    const actionKey = `${idGruppo}-${idPersona}`;
+    setSentGroupInviteActionKey(actionKey);
+    await withAction(async () => {
+      const res = await cancelSentGroupInvite(idGruppo, idPersona);
+      setBanner(res.message);
+    });
+    setSentGroupInviteActionKey(null);
   }
 
   return (
@@ -877,7 +908,16 @@ export function SocialHubPage() {
                                   <p className="text-[11px] text-slate-400">In attesa di risposta.</p>
                                 </div>
                               </div>
-                              <span className="rounded-full border border-sky-400/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Sent</span>
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-full border border-sky-400/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-200">Sent</span>
+                                <button
+                                  onClick={() => void handleCancelSentRequest(req.id_persona)}
+                                  disabled={friendActionId === req.id_persona}
+                                  className="rounded-lg bg-rose-500/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-200 transition-all duration-300 hover:bg-rose-500/30 disabled:opacity-70"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))
@@ -958,7 +998,16 @@ export function SocialHubPage() {
                                 <p className="truncate text-sm font-bold text-slate-100">{invite.gruppo.nome}</p>
                                 <p className="text-[11px] text-slate-400">Inviato a {invite.invitato.username}</p>
                               </div>
-                              <span className="rounded-full border border-sky-400/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-200">Sent</span>
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-full border border-sky-400/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-200">Sent</span>
+                                <button
+                                  onClick={() => void handleCancelSentGroupInvite(invite.id_gruppo, invite.invitato.id_persona)}
+                                  disabled={sentGroupInviteActionKey === `${invite.id_gruppo}-${invite.invitato.id_persona}`}
+                                  className="rounded-lg bg-rose-500/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-200 transition-all duration-300 hover:bg-rose-500/30 disabled:opacity-70"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))
@@ -1042,27 +1091,29 @@ export function SocialHubPage() {
       </div>
 
       <AnimatePresence mode="wait">
-        {banner ? (
+        {banner || loadingError ? (
           <motion.div
             key="social-banner"
-            initial={{ opacity: 0, y: -10 }}
+            initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
+            exit={{ opacity: 0, y: 18 }}
             transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300"
+            className={`fixed bottom-4 right-4 z-[120] w-[min(520px,90vw)] rounded-xl border px-4 py-3 text-sm shadow-[0_12px_30px_rgba(0,0,0,0.45)] backdrop-blur ${banner ? 'border-violet-500/35 bg-[#141529]/95 text-violet-100' : 'border-rose-500/35 bg-[#26131b]/95 text-rose-100'}`}
           >
-            {banner}
-          </motion.div>
-        ) : loadingError ? (
-          <motion.div
-            key="social-error"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300"
-          >
-            {loadingError}
+            <div className="flex items-start gap-3">
+              <span className={`material-symbols-outlined mt-0.5 ${banner ? 'text-violet-300' : 'text-rose-300'}`}>{banner ? 'check_circle' : 'error'}</span>
+              <p className="flex-1">{banner ?? loadingError}</p>
+              <button
+                onClick={() => {
+                  setBanner(null);
+                  setLoadingError(null);
+                }}
+                className="grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-white/10"
+                aria-label="Chiudi notifica"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
           </motion.div>
         ) : null}
       </AnimatePresence>

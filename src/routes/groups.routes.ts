@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import {
   acceptGroupInvite,
+  cancelSentGroupInvite,
   createGroup,
   deleteGroup,
   demoteMember,
   getGroupMembers,
   getGroupPublicProfile,
   getGroupRanking,
+  getMyGroupWorkspace,
   getMyGroups,
   getMyPendingGroupInvites,
   getMySentGroupInvites,
@@ -17,6 +19,7 @@ import {
   removeGroupMember,
   searchGroupsByName,
   updateGroupName,
+  updateGroupPhoto,
   updateGroupBudget,
   updateGroupDescription,
   updateGroupPrivacy,
@@ -29,6 +32,7 @@ groupsRouter.get('/search', optionalAuth, searchGroupsByName);
 groupsRouter.get('/:id_gruppo/members', optionalAuth, getGroupMembers);
 groupsRouter.get('/:id_gruppo/profile', optionalAuth, getGroupPublicProfile);
 groupsRouter.get('/:id_gruppo/ranking', optionalAuth, getGroupRanking);
+groupsRouter.get('/:id_gruppo/workspace', authenticate, getMyGroupWorkspace);
 
 groupsRouter.post('/', authenticate, createGroup);
 groupsRouter.get('/mine', authenticate, getMyGroups);
@@ -36,8 +40,10 @@ groupsRouter.delete('/:id_gruppo', authenticate, deleteGroup);
 groupsRouter.patch('/:id_gruppo/privacy', authenticate, updateGroupPrivacy);
 groupsRouter.patch('/:id_gruppo/name', authenticate, updateGroupName);
 groupsRouter.patch('/:id_gruppo/description', authenticate, updateGroupDescription);
+groupsRouter.patch('/:id_gruppo/photo', authenticate, updateGroupPhoto);
 
 groupsRouter.post('/:id_gruppo/invites', authenticate, inviteToGroup);
+groupsRouter.delete('/:id_gruppo/invites/:id_persona', authenticate, cancelSentGroupInvite);
 groupsRouter.get('/invites/pending', authenticate, getMyPendingGroupInvites);
 groupsRouter.get('/invites/sent', authenticate, getMySentGroupInvites);
 groupsRouter.post('/invites/:id_gruppo/accept', authenticate, acceptGroupInvite);

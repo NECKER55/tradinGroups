@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/context/AuthContext';
 import Counter from '../../../shared/components/Counter';
@@ -321,6 +322,7 @@ export function WorkspacePreviewSection() {
       const response = await updatePrivateBalance({ delta_liquidita: signed.toFixed(2) });
       setCash(toNumber(response.portfolio.liquidita));
       setBalanceMessage(`Operazione confermata: ${actionLabel} di ${toCurrency(parsed)}. ${response.message}`);
+      setIsFundsPanelOpen(false);
     } catch (err) {
       setBalanceMessage(err instanceof Error ? err.message : 'Operazione non riuscita.');
     } finally {
@@ -447,24 +449,25 @@ export function WorkspacePreviewSection() {
             </button>
           </div>
 
-          <AnimatePresence>
-            {isFundsPanelOpen ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                onClick={() => setIsFundsPanelOpen(false)}
-                className="fixed inset-0 z-[95] flex items-start justify-center bg-black/50 px-5 pt-28"
-              >
+          {typeof document !== 'undefined' ? createPortal(
+            <AnimatePresence>
+              {isFundsPanelOpen ? (
                 <motion.div
-                  initial={{ opacity: 0, y: -14, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -14, scale: 0.98 }}
-                  transition={{ duration: 0.28, ease: 'easeInOut' }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="w-full max-w-[560px] rounded-2xl border border-violet-500/25 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={() => setIsFundsPanelOpen(false)}
+                  className="fixed inset-0 z-[180] flex items-start justify-center bg-black/50 px-5 pt-28"
                 >
+                  <motion.div
+                    initial={{ opacity: 0, y: -14, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -14, scale: 0.98 }}
+                    transition={{ duration: 0.28, ease: 'easeInOut' }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-[560px] rounded-2xl border border-violet-500/25 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40"
+                  >
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Wallet Actions</p>
@@ -512,29 +515,32 @@ export function WorkspacePreviewSection() {
                   </div>
 
                   {balanceMessage ? <p className="mt-3 text-xs text-slate-300">{balanceMessage}</p> : null}
+                  </motion.div>
                 </motion.div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
+              ) : null}
+            </AnimatePresence>,
+            document.body,
+          ) : null}
         </div>
       </div>
 
-      <AnimatePresence>
-        {pendingBalanceAction ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[98] flex items-center justify-center bg-black/70 px-5"
-          >
+      {typeof document !== 'undefined' ? createPortal(
+        <AnimatePresence>
+          {pendingBalanceAction ? (
             <motion.div
-              initial={{ opacity: 0, y: 30, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 24, scale: 0.96 }}
-              transition={{ duration: 0.28, ease: 'easeInOut' }}
-              className="w-full max-w-md rounded-2xl border border-violet-400/30 bg-[#111118] p-5 shadow-2xl shadow-violet-900/30"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[190] flex items-center justify-center bg-black/70 px-5"
             >
+              <motion.div
+                initial={{ opacity: 0, y: 30, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 24, scale: 0.96 }}
+                transition={{ duration: 0.28, ease: 'easeInOut' }}
+                className="w-full max-w-md rounded-2xl border border-violet-400/30 bg-[#111118] p-5 shadow-2xl shadow-violet-900/30"
+              >
               <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Conferma operazione</p>
               <p className="mt-3 text-sm text-slate-200">
                 Confermi di voler eseguire un
@@ -558,10 +564,12 @@ export function WorkspacePreviewSection() {
                   Annulla
                 </button>
               </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+          ) : null}
+        </AnimatePresence>,
+        document.body,
+      ) : null}
 
       <div className="violet-underlight relative overflow-hidden rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-6">
         <div className="absolute -left-24 -top-24 size-48 bg-violet-500/10 blur-[100px]" />

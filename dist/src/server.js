@@ -14,10 +14,29 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const routes_1 = __importDefault(require("./routes"));
 const errorHandler_1 = require("./middleware/errorHandler");
 const tradingEngine_1 = require("./jobs/tradingEngine");
+const portfolioValuation_1 = require("./jobs/portfolioValuation");
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT ?? '3000');
 // ─── Security ─────────────────────────────────────────────────
-app.use((0, helmet_1.default)());
+app.use((0, helmet_1.default)({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            baseUri: ["'self'"],
+            fontSrc: ["'self'", 'https:', 'data:'],
+            formAction: ["'self'"],
+            frameAncestors: ["'self'"],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            objectSrc: ["'none'"],
+            scriptSrc: ["'self'", 'https:', "'unsafe-inline'", "'unsafe-eval'", 'https://s3.tradingview.com', 'https://*.tradingview.com', 'https://www.tradingview.com'],
+            scriptSrcAttr: ["'none'"],
+            styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
+            connectSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview-widget.com', 'wss://*.tradingview.com'],
+            frameSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview.com', 'https://www.tradingview-widget.com', 'https://*.tradingview-widget.com'],
+            upgradeInsecureRequests: [],
+        },
+    },
+}));
 app.use((0, cors_1.default)({
     origin: process.env.FRONTEND_URL ?? 'http://localhost:5173',
     credentials: true, // necessario per i cookie HttpOnly del refresh token
@@ -57,6 +76,7 @@ app.listen(PORT, () => {
     // Avvia i cron job solo in produzione o se esplicitamente abilitati.
     if (process.env.NODE_ENV === 'production' || process.env.ENABLE_CRON === 'true') {
         (0, tradingEngine_1.startCronJobs)();
+        (0, portfolioValuation_1.startDailyPortfolioValuationJob)();
     }
 });
 exports.default = app;

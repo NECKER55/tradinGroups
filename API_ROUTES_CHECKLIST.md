@@ -33,6 +33,7 @@ Legenda: la `x` indica che la funzionalità è presente nel codice.
 - [x] Inviti ricevuti
 - [x] Accetta invito
 - [x] Rifiuta invito
+- [x] Annulla invito
 - [x] Cambia ruolo membro (Owner only)
 - [x] Espelli
 - [x] Abbandona

@@ -70,6 +70,14 @@ const UpdateGroupDescriptionSchema = z.object({
   descrizione: z.string().trim().max(1000).optional(),
 });
 
+const UpdateGroupPhotoSchema = z.object({
+  photo_url: z.string().trim().url().max(255).nullable().optional(),
+});
+
+const LeaveGroupSchema = z.object({
+  new_owner_id: z.coerce.number().int().positive().optional(),
+});
+
 function parsePositiveBudget(raw: string | number | undefined): Prisma.Decimal {
   const value = String(raw ?? '0').trim();
   if (!/^\d+(\.\d{1,2})?$/.test(value)) {
@@ -115,6 +123,32 @@ async function requireMembership(
 
 function getRequesterId(req: Request): number | null {
   return (req as Partial<AuthRequest>).user?.sub ?? null;
+}
+
+function serializeTransactionForResponse(t: {
+  id_transazione: number;
+  id_portafoglio: number;
+  id_stock: string;
+  tipo: string;
+  stato: string;
+  prezzo_esecuzione: Prisma.Decimal;
+  importo_investito: Prisma.Decimal | null;
+  quantita_azioni: Prisma.Decimal | null;
+  created_at: Date;
+  approved_at: Date | null;
+}) {
+  return {
+    id_transazione: t.id_transazione,
+    id_portafoglio: t.id_portafoglio,
+    id_stock: t.id_stock,
+    tipo: t.tipo,
+    stato: t.stato,
+    prezzo_esecuzione: t.prezzo_esecuzione.toString(),
+    importo_investito: t.importo_investito?.toString() ?? null,
+    quantita_azioni: t.quantita_azioni?.toString() ?? null,
+    created_at: t.created_at,
+    approved_at: t.approved_at,
+  };
 }
 
 async function getGroupReadContext(id_gruppo: number, requesterId: number | null) {
@@ -366,6 +400,54 @@ export async function inviteToGroup(req: Request, res: Response): Promise<void> 
   res.status(201).json({
     message: 'Invito inviato con successo.',
     invite,
+  });
+}
+
+export async function cancelSentGroupInvite(req: Request, res: Response): Promise<void> {
+  const parsed = MemberParamsSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Parametri non validi.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_gruppo, id_persona } = parsed.data;
+
+  const actorMembership = await requireMembership(id_gruppo, sub, res);
+  if (!actorMembership) {
+    return;
+  }
+
+  if (!['Owner', 'Admin'].includes(actorMembership.ruolo)) {
+    res.status(403).json({
+      error: 'INSUFFICIENT_ROLE',
+      message: 'Solo Owner o Admin possono annullare inviti pendenti.',
+    });
+    return;
+  }
+
+  const deleted = await prisma.invito_Gruppo.deleteMany({
+    where: {
+      id_gruppo,
+      id_invitato: id_persona,
+      id_mittente: sub,
+    },
+  });
+
+  if (deleted.count === 0) {
+    res.status(404).json({
+      error: 'INVITE_NOT_FOUND',
+      message: 'Invito non trovato o non inviato da te.',
+    });
+    return;
+  }
+
+  res.json({
+    message: 'Invito annullato con successo.',
   });
 }
 
@@ -765,17 +847,21 @@ export async function demoteMember(req: Request, res: Response): Promise<void> {
 
 export async function leaveGroup(req: Request, res: Response): Promise<void> {
   const parsed = GroupIdParamsSchema.safeParse(req.params);
+  const parsedBody = LeaveGroupSchema.safeParse(req.body ?? {});
 
-  if (!parsed.success) {
+  if (!parsed.success || !parsedBody.success) {
     res.status(400).json({
       error: 'VALIDATION_ERROR',
-      message: parsed.error.errors[0]?.message ?? 'id_gruppo non valido.',
+      message: parsed.error?.errors[0]?.message
+        ?? parsedBody.error?.errors[0]?.message
+        ?? 'Payload non valido.',
     });
     return;
   }
 
   const { sub } = (req as AuthRequest).user;
   const { id_gruppo } = parsed.data;
+  const { new_owner_id } = parsedBody.data;
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
 
@@ -798,10 +884,63 @@ export async function leaveGroup(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    res.status(409).json({
-      error: 'OWNER_CANNOT_LEAVE',
-      message: 'Devi promuovere un altro utente a Owner prima di abbandonare il gruppo.',
+    if (!new_owner_id || new_owner_id === sub) {
+      res.status(400).json({
+        error: 'NEW_OWNER_REQUIRED',
+        message: 'Devi selezionare un nuovo owner valido prima di abbandonare il gruppo.',
+      });
+      return;
+    }
+
+    const candidate = await getMembershipOrNull(id_gruppo, new_owner_id);
+
+    if (!candidate) {
+      res.status(404).json({
+        error: 'NEW_OWNER_NOT_FOUND',
+        message: 'Il nuovo owner selezionato non fa parte del gruppo.',
+      });
+      return;
+    }
+
+    if (candidate.ruolo === 'Owner') {
+      res.status(400).json({
+        error: 'INVALID_NEW_OWNER',
+        message: 'Il nuovo owner selezionato e gia owner.',
+      });
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.portafoglio.deleteMany({
+        where: {
+          id_gruppo,
+          id_persona: sub,
+        },
+      });
+
+      await tx.membro_Gruppo.delete({
+        where: {
+          id_persona_id_gruppo: {
+            id_persona: sub,
+            id_gruppo,
+          },
+        },
+      });
+
+      await tx.membro_Gruppo.update({
+        where: {
+          id_persona_id_gruppo: {
+            id_persona: new_owner_id,
+            id_gruppo,
+          },
+        },
+        data: {
+          ruolo: 'Owner',
+        },
+      });
     });
+
+    res.json({ message: 'Ownership trasferita: hai abbandonato il gruppo con successo.' });
     return;
   }
 
@@ -1067,6 +1206,23 @@ export async function getGroupMembers(req: Request, res: Response): Promise<void
     ],
   });
 
+  const portfolios = await prisma.portafoglio.findMany({
+    where: { id_gruppo },
+    select: {
+      id_persona: true,
+      id_portafoglio: true,
+      liquidita: true,
+    },
+  });
+
+  const portfolioByPerson = new Map<number, { id_portafoglio: number; liquidita: Prisma.Decimal }>();
+  for (const row of portfolios) {
+    portfolioByPerson.set(row.id_persona, {
+      id_portafoglio: row.id_portafoglio,
+      liquidita: row.liquidita,
+    });
+  }
+
   res.json({
     group: readContext.group,
     count: members.length,
@@ -1075,6 +1231,9 @@ export async function getGroupMembers(req: Request, res: Response): Promise<void
       username: member.persona.username,
       photo_url: member.persona.photo_url,
       ruolo: member.ruolo,
+      budget_iniziale: member.budget_iniziale.toString(),
+      id_portafoglio: portfolioByPerson.get(member.persona.id_persona)?.id_portafoglio ?? null,
+      portfolio_liquidita: portfolioByPerson.get(member.persona.id_persona)?.liquidita.toString() ?? null,
     })),
   });
 }
@@ -1294,10 +1453,10 @@ export async function updateGroupName(req: Request, res: Response): Promise<void
   }
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
-  if (!membership || membership.ruolo !== 'Owner') {
+  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
     res.status(403).json({
-      error: 'ONLY_OWNER_CAN_UPDATE_GROUP',
-      message: 'Solo l\'owner puo modificare il nome del gruppo.',
+      error: 'INSUFFICIENT_ROLE',
+      message: 'Solo Owner o Admin possono modificare il nome del gruppo.',
     });
     return;
   }
@@ -1379,10 +1538,10 @@ export async function updateGroupDescription(req: Request, res: Response): Promi
   }
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
-  if (!membership || membership.ruolo !== 'Owner') {
+  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
     res.status(403).json({
-      error: 'ONLY_OWNER_CAN_UPDATE_GROUP',
-      message: 'Solo l\'owner puo modificare la descrizione del gruppo.',
+      error: 'INSUFFICIENT_ROLE',
+      message: 'Solo Owner o Admin possono modificare la descrizione del gruppo.',
     });
     return;
   }
@@ -1402,6 +1561,68 @@ export async function updateGroupDescription(req: Request, res: Response): Promi
 
   res.json({
     message: 'Descrizione gruppo aggiornata con successo.',
+    group: {
+      ...updated,
+      budget_iniziale: updated.budget_iniziale.toString(),
+    },
+  });
+}
+
+export async function updateGroupPhoto(req: Request, res: Response): Promise<void> {
+  const parsedParams = GroupIdParamsSchema.safeParse(req.params);
+  const parsedBody = UpdateGroupPhotoSchema.safeParse(req.body);
+
+  if (!parsedParams.success || !parsedBody.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsedParams.error?.errors[0]?.message
+        ?? parsedBody.error?.errors[0]?.message
+        ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_gruppo } = parsedParams.data;
+  const photo_url = parsedBody.data.photo_url?.trim() || null;
+
+  const group = await prisma.gruppo.findUnique({
+    where: { id_gruppo },
+    select: { id_gruppo: true },
+  });
+
+  if (!group) {
+    res.status(404).json({
+      error: 'GROUP_NOT_FOUND',
+      message: 'Gruppo non trovato.',
+    });
+    return;
+  }
+
+  const membership = await getMembershipOrNull(id_gruppo, sub);
+  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
+    res.status(403).json({
+      error: 'INSUFFICIENT_ROLE',
+      message: 'Solo Owner o Admin possono modificare la foto del gruppo.',
+    });
+    return;
+  }
+
+  const updated = await prisma.gruppo.update({
+    where: { id_gruppo },
+    data: { photo_url },
+    select: {
+      id_gruppo: true,
+      nome: true,
+      privacy: true,
+      photo_url: true,
+      descrizione: true,
+      budget_iniziale: true,
+    },
+  });
+
+  res.json({
+    message: 'Foto gruppo aggiornata con successo.',
     group: {
       ...updated,
       budget_iniziale: updated.budget_iniziale.toString(),
@@ -1559,5 +1780,149 @@ export async function getGroupRanking(req: Request, res: Response): Promise<void
     snapshot_date: snapshotDate ? snapshotDate.toISOString().slice(0, 10) : null,
     count: ranking.length,
     ranking,
+  });
+}
+
+export async function getMyGroupWorkspace(req: Request, res: Response): Promise<void> {
+  const parsed = GroupIdParamsSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'id_gruppo non valido.',
+    });
+    return;
+  }
+
+  const { sub } = (req as AuthRequest).user;
+  const { id_gruppo } = parsed.data;
+
+  const membership = await getMembershipOrNull(id_gruppo, sub);
+
+  if (!membership) {
+    res.status(403).json({
+      error: 'GROUP_FORBIDDEN',
+      message: 'Non fai parte di questo gruppo.',
+    });
+    return;
+  }
+
+  const [group, portfolio] = await Promise.all([
+    prisma.gruppo.findUnique({
+      where: { id_gruppo },
+      select: {
+        id_gruppo: true,
+        nome: true,
+        photo_url: true,
+        privacy: true,
+        descrizione: true,
+        budget_iniziale: true,
+      },
+    }),
+    prisma.portafoglio.findFirst({
+      where: {
+        id_gruppo,
+        id_persona: sub,
+      },
+      select: {
+        id_portafoglio: true,
+        liquidita: true,
+        id_persona: true,
+        id_gruppo: true,
+      },
+    }),
+  ]);
+
+  if (!group) {
+    res.status(404).json({
+      error: 'GROUP_NOT_FOUND',
+      message: 'Gruppo non trovato.',
+    });
+    return;
+  }
+
+  if (!portfolio) {
+    res.status(404).json({
+      error: 'GROUP_PORTFOLIO_NOT_FOUND',
+      message: 'Portafoglio gruppo non trovato per questo utente.',
+    });
+    return;
+  }
+
+  const [holdings, history, transactions, watchlist] = await Promise.all([
+    prisma.azioni_in_possesso.findMany({
+      where: { id_portafoglio: portfolio.id_portafoglio },
+      include: {
+        stock: {
+          select: {
+            nome_societa: true,
+            settore: true,
+          },
+        },
+      },
+      orderBy: { id_stock: 'asc' },
+    }),
+    prisma.storico_Portafoglio.findMany({
+      where: {
+        id_persona: sub,
+        id_gruppo,
+      },
+      orderBy: { data: 'asc' },
+    }),
+    prisma.transazione.findMany({
+      where: {
+        id_portafoglio: portfolio.id_portafoglio,
+      },
+      orderBy: { created_at: 'desc' },
+    }),
+    prisma.watchlist.findMany({
+      where: {
+        id_persona: sub,
+      },
+      include: {
+        stock: {
+          select: {
+            nome_societa: true,
+            settore: true,
+          },
+        },
+      },
+      orderBy: { id_stock: 'asc' },
+    }),
+  ]);
+
+  res.json({
+    group: {
+      id_gruppo: group.id_gruppo,
+      nome: group.nome,
+      photo_url: group.photo_url,
+      privacy: group.privacy,
+      descrizione: group.descrizione,
+      budget_iniziale: group.budget_iniziale.toString(),
+      ruolo: membership.ruolo,
+    },
+    portfolio: {
+      id_portafoglio: portfolio.id_portafoglio,
+      liquidita: portfolio.liquidita.toString(),
+      id_persona: portfolio.id_persona,
+      id_gruppo: portfolio.id_gruppo,
+    },
+    holdings: holdings.map((h) => ({
+      id_stock: h.id_stock,
+      nome_societa: h.stock.nome_societa,
+      settore: h.stock.settore,
+      numero: h.numero.toString(),
+      prezzo_medio_acquisto: h.prezzo_medio_acquisto.toString(),
+    })),
+    history: history.map((row) => ({
+      data: row.data.toISOString().slice(0, 10),
+      valore_totale: row.valore_totale.toString(),
+    })),
+    transactions: transactions.map((t) => serializeTransactionForResponse(t)),
+    watchlist: watchlist.map((w) => ({
+      id_stock: w.id_stock,
+      nome_societa: w.stock.nome_societa,
+      settore: w.stock.settore,
+    })),
   });
 }

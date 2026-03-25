@@ -118,6 +118,12 @@ export async function sendFriendRequest(idPersona: number): Promise<{ message: s
   });
 }
 
+export async function cancelSentFriendRequest(idPersona: number): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(ROUTES.TRADING.FRIENDSHIP_CANCEL_REQUEST(idPersona), {
+    method: 'DELETE',
+  });
+}
+
 export async function acceptFriendRequest(idPersona: number): Promise<{ message: string }> {
   return apiRequest<{ message: string }>(ROUTES.TRADING.FRIENDSHIP_ACCEPT(idPersona), { method: 'POST' });
 }
@@ -166,5 +172,11 @@ export async function invitePersonToGroup(idGruppo: number, idPersona: number): 
   return apiRequest<{ message: string }>(ROUTES.GROUPS.INVITE_TO_GROUP(idGruppo), {
     method: 'POST',
     body: JSON.stringify({ id_persona: idPersona }),
+  });
+}
+
+export async function cancelSentGroupInvite(idGruppo: number, idPersona: number): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(ROUTES.GROUPS.CANCEL_INVITE(idGruppo, idPersona), {
+    method: 'DELETE',
   });
 }
