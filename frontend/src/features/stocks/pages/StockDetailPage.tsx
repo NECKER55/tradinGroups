@@ -25,6 +25,32 @@ interface StockRouteState {
   context?: StockPageContext;
 }
 
+function parseContextFromQuery(search: string): StockPageContext | undefined {
+  const params = new URLSearchParams(search);
+  const scope = params.get('scope');
+
+  if (scope !== 'personal' && scope !== 'group') return undefined;
+
+  const groupIdRaw = params.get('groupId');
+  const portfolioIdRaw = params.get('portfolioId');
+
+  const groupId = groupIdRaw !== null ? Number(groupIdRaw) : undefined;
+  const portfolioId = portfolioIdRaw !== null ? Number(portfolioIdRaw) : undefined;
+
+  const normalizedGroupId = Number.isFinite(groupId) ? groupId : undefined;
+  const normalizedPortfolioId = Number.isFinite(portfolioId) ? portfolioId : undefined;
+
+  if (scope === 'group' && !Number.isFinite(normalizedGroupId)) {
+    return undefined;
+  }
+
+  return {
+    scope,
+    groupId: normalizedGroupId,
+    portfolioId: normalizedPortfolioId,
+  };
+}
+
 function toCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 }
@@ -41,7 +67,10 @@ export function StockDetailPage() {
   const location = useLocation();
   const routeState = location.state as StockRouteState | null;
   const state = routeState?.stock;
-  const pageContext = routeState?.context;
+  const pageContext = useMemo(
+    () => parseContextFromQuery(location.search) ?? routeState?.context,
+    [location.search, routeState?.context],
+  );
 
   const stockSymbol = symbol.toUpperCase();
   const stockName = state?.nome_societa ?? stockSymbol;

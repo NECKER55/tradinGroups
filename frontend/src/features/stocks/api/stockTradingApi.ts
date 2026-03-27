@@ -63,11 +63,20 @@ export interface StockDetailBootstrap {
 export interface StockPageContext {
   scope: 'personal' | 'group';
   groupId?: number;
+  portfolioId?: number;
 }
 
 export async function loadStockDetailBootstrap(context?: StockPageContext): Promise<StockDetailBootstrap> {
+  if (context?.scope === 'group' && !Number.isFinite(context.groupId)) {
+    throw new Error('Contesto gruppo non valido. Apri il titolo nuovamente dalla sezione gruppo.');
+  }
+
   if (context?.scope === 'group' && Number.isFinite(context.groupId)) {
     const groupData = await getGroupWorkspace(context.groupId as number);
+
+    if (Number.isFinite(context.portfolioId) && context.portfolioId !== groupData.portfolio.id_portafoglio) {
+      throw new Error('Il portfolio selezionato non corrisponde al gruppo di origine. Riapri il titolo dal workspace corretto.');
+    }
 
     return {
       portfolioId: groupData.portfolio.id_portafoglio,
@@ -77,8 +86,12 @@ export async function loadStockDetailBootstrap(context?: StockPageContext): Prom
     };
   }
 
-  const privateBalance: PrivateBalanceResponse = await getPrivateBalance();
+  const privateBalance: PrivateBalanceResponse = await getPrivateBalance(context?.portfolioId);
   const portfolioId = privateBalance.portfolio.id_portafoglio;
+
+  if (Number.isFinite(context?.portfolioId) && context?.portfolioId !== portfolioId) {
+    throw new Error('Il portfolio selezionato non corrisponde all area personale. Riapri il titolo dal workspace personale.');
+  }
 
   const [holdingsRes, watchlistRes] = await Promise.all([
     getPortfolioHoldings(portfolioId),

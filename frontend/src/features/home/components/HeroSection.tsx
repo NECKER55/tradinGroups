@@ -1,4 +1,10 @@
-export function HeroSection() {
+type HeroSectionProps = {
+  searchTerm: string;
+  onSearchTermChange: (value: string) => void;
+  searchLoading: boolean;
+};
+
+export function HeroSection({ searchTerm, onSearchTermChange, searchLoading }: HeroSectionProps) {
   return (
     <section className="mx-auto max-w-7xl px-6 py-12">
       <div className="violet-underlight mb-12 flex flex-col items-center gap-6 text-center animate-rise-in">
@@ -15,11 +21,17 @@ export function HeroSection() {
             <span className="material-symbols-outlined ml-4 text-canvas/45">search</span>
             <input
               type="text"
-              placeholder="Search squads, strategies, markets..."
+              value={searchTerm}
+              onChange={(event) => onSearchTermChange(event.target.value)}
+              placeholder="Search groups by name..."
               className="w-full border-none bg-transparent px-4 py-3 text-canvas placeholder:text-canvas/35 focus:outline-none focus:ring-0"
             />
-            <button className="rounded-xl bg-signal px-6 py-3 font-bold text-obsidian transition-all hover:bg-signal/90">
-              Search
+            <button
+              type="button"
+              onClick={() => onSearchTermChange('')}
+              className="rounded-xl bg-signal px-6 py-3 font-bold text-obsidian transition-all hover:bg-signal/90"
+            >
+              {searchLoading ? 'Searching...' : (searchTerm.trim() ? 'Clear' : 'Search')}
             </button>
           </div>
         </div>

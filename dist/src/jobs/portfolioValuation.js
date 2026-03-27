@@ -96,6 +96,24 @@ function computePortfolioTotal(portfolio, pendingForPortfolio, quotes) {
     }
     return new client_1.Prisma.Decimal(total.toFixed(2));
 }
+async function syncCurrentStockPrices(quotes) {
+    if (quotes.size === 0)
+        return;
+    const updates = [];
+    for (const [id_stock, price] of quotes.entries()) {
+        if (!Number.isFinite(price) || price <= 0)
+            continue;
+        updates.push(prisma_1.prisma.stock.updateMany({
+            where: { id_stock },
+            data: {
+                prezzo_attuale: new client_1.Prisma.Decimal(price.toFixed(6)),
+            },
+        }));
+    }
+    if (updates.length > 0) {
+        await prisma_1.prisma.$transaction(updates);
+    }
+}
 async function runPortfolioValuationJobOnce() {
     if (isValuationRunning) {
         console.log('[jobs] Portfolio valuation gia in esecuzione, skip.');
@@ -116,6 +134,8 @@ async function runPortfolioValuationJobOnce() {
         const quotes = tickers.length > 0
             ? await (0, finnhub_1.fetchQuotesForTickers)(tickers)
             : new Map();
+        // Mantiene sempre allineata la quotazione corrente per titolo.
+        await syncCurrentStockPrices(quotes);
         const pendingByPortfolio = new Map();
         for (const order of pendingOrders) {
             const list = pendingByPortfolio.get(order.id_portafoglio) ?? [];

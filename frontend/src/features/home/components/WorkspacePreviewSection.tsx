@@ -4,9 +4,12 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/context/AuthContext';
 import Counter from '../../../shared/components/Counter';
+import { HoldingsDonutPanel } from '../../../shared/components/HoldingsDonutPanel';
+import { PortfolioPerformanceChart } from '../../../shared/components/PortfolioPerformanceChart';
 import {
   BalanceHistoryPoint,
   cancelPendingOrder,
+  getStocksCurrentPrices,
   HoldingItem,
   StockSearchItem,
   TransactionItem,
@@ -21,7 +24,9 @@ import {
 } from '../api/personalWorkspaceApi';
 
 type WorkspaceTab = 'assets' | 'history' | 'watchlist';
-type RangeKey = '1D' | '1W' | '1M' | '1Y' | 'ALL';
+type HistoryPeriodFilter = 'ALL' | '7D' | '30D' | '90D' | '365D';
+type HistoryTypeFilter = 'ALL' | 'Buy' | 'Sell';
+type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed';
 
 function toCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -33,84 +38,13 @@ function toNumber(value: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function dateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function buildSeries(history: BalanceHistoryPoint[], range: RangeKey): { labels: string[]; values: number[] } {
-  const dayMap = new Map<string, number>();
-  const monthMap = new Map<string, number>();
-
-  for (const row of history) {
-    const value = toNumber(row.valore_totale);
-    dayMap.set(row.data, value);
-    monthMap.set(row.data.slice(0, 7), value);
-  }
-
-  const now = new Date();
-
-  if (range === '1D') {
-    const labels: string[] = [];
-    const values: number[] = [];
-    for (let i = 23; i >= 0; i--) {
-      const d = new Date(now);
-      d.setHours(now.getHours() - i, 0, 0, 0);
-      labels.push(`${String(d.getHours()).padStart(2, '0')}:00`);
-      values.push(dayMap.get(dateKey(d)) ?? 0);
-    }
-    return { labels, values };
-  }
-
-  if (range === '1W' || range === '1M') {
-    const span = range === '1W' ? 7 : 30;
-    const labels: string[] = [];
-    const values: number[] = [];
-    for (let i = span - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      labels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
-      values.push(dayMap.get(dateKey(d)) ?? 0);
-    }
-    return { labels, values };
-  }
-
-  if (range === '1Y') {
-    const labels: string[] = [];
-    const values: number[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      labels.push(d.toLocaleString('en-US', { month: 'short' }).toUpperCase());
-      values.push(monthMap.get(monthKey(d)) ?? 0);
-    }
-    return { labels, values };
-  }
-
-  const first = history.length ? new Date(history[0].data) : new Date(now.getFullYear(), now.getMonth(), 1);
-  const labels: string[] = [];
-  const values: number[] = [];
-  const cursor = new Date(first.getFullYear(), first.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  while (cursor <= end) {
-    labels.push(`${cursor.toLocaleString('en-US', { month: 'short' }).toUpperCase()} ${String(cursor.getFullYear()).slice(-2)}`);
-    values.push(monthMap.get(monthKey(cursor)) ?? 0);
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-
-  return { labels, values };
-}
-
 export function WorkspacePreviewSection() {
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('assets');
-  const [range, setRange] = useState<RangeKey>('1M');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [personalPortfolioId, setPersonalPortfolioId] = useState<number | null>(null);
   const [cash, setCash] = useState(0);
   const [holdings, setHoldings] = useState<HoldingItem[]>([]);
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
@@ -126,6 +60,57 @@ export function WorkspacePreviewSection() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const [historyPeriodFilter, setHistoryPeriodFilter] = useState<HistoryPeriodFilter>('ALL');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('ALL');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<HistoryStatusFilter>('ALL');
+
+  function pricesToMap(prices: Array<{ id_stock: string; prezzo_attuale: string | null }>): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const row of prices) {
+      const value = Number(row.prezzo_attuale ?? 0);
+      if (Number.isFinite(value) && value > 0) {
+        out[row.id_stock] = value;
+      }
+    }
+    return out;
+  }
+
+  async function refreshPrivateWorkspaceForTab(tab: WorkspaceTab) {
+    const privateBalance = await getPrivateBalance(personalPortfolioId ?? undefined);
+    const portfolioId = privateBalance.portfolio.id_portafoglio;
+
+    setPersonalPortfolioId(portfolioId);
+    setCash(toNumber(privateBalance.portfolio.liquidita));
+
+    if (tab === 'assets') {
+      const [holdingsRes, historyRes] = await Promise.all([
+        getPortfolioHoldings(portfolioId),
+        getPortfolioBalanceHistory(portfolioId),
+      ]);
+      const pricesRes = await getStocksCurrentPrices(holdingsRes.holdings.map((h) => h.id_stock));
+      setHoldings(holdingsRes.holdings);
+      setHistory(historyRes.history);
+      setCurrentPrices(pricesToMap(pricesRes.prices));
+      return;
+    }
+
+    if (tab === 'history') {
+      if (!user) return;
+      const txRes = await getProfileTransactions(user.id_persona, 365);
+      setTransactions(txRes.transactions);
+      return;
+    }
+
+    const watchlistRes = await getMyWatchlist();
+    setWatchlist(watchlistRes.results);
+  }
+
+  function buildPersonalStockHref(stockId: string): string {
+    const params = new URLSearchParams({ scope: 'personal' });
+    if (personalPortfolioId) params.set('portfolioId', String(personalPortfolioId));
+    return `/stocks/${stockId}?${params.toString()}`;
+  }
 
   useEffect(() => {
     const isBlockingOverlayOpen = Boolean(isFundsPanelOpen || pendingBalanceAction);
@@ -188,11 +173,14 @@ export function WorkspacePreviewSection() {
           getProfileTransactions(userId, 365),
           getMyWatchlist(),
         ]);
+        const pricesRes = await getStocksCurrentPrices(holdingsRes.holdings.map((h) => h.id_stock));
 
         if (!active) return;
 
+        setPersonalPortfolioId(portfolioId);
         setCash(toNumber(privateBalance.portfolio.liquidita));
         setHoldings(holdingsRes.holdings);
+        setCurrentPrices(pricesToMap(pricesRes.prices));
         setHistory(historyRes.history);
         setTransactions(txRes.transactions);
         setWatchlist(watchlistRes.results);
@@ -212,6 +200,26 @@ export function WorkspacePreviewSection() {
   }, [isAuthenticated, user]);
 
   useEffect(() => {
+    if (!isAuthenticated || !user || !personalPortfolioId) return;
+
+    let active = true;
+
+    async function refreshOnTabChange() {
+      try {
+        await refreshPrivateWorkspaceForTab(activeTab);
+      } catch {
+        if (!active) return;
+      }
+    }
+
+    void refreshOnTabChange();
+
+    return () => {
+      active = false;
+    };
+  }, [activeTab, isAuthenticated, personalPortfolioId, user]);
+
+  useEffect(() => {
     if (!isAuthenticated || !user) return;
 
     const interval = setInterval(async () => {
@@ -226,26 +234,44 @@ export function WorkspacePreviewSection() {
     return () => clearInterval(interval);
   }, [isAuthenticated, user]);
 
-  const chart = useMemo(() => buildSeries(history, range), [history, range]);
-  const maxChart = Math.max(1, ...chart.values);
-  const minChart = Math.min(...chart.values, 0);
-  const chartSpan = Math.max(1, maxChart - minChart);
-
   const lastValue = history.length ? toNumber(history[history.length - 1].valore_totale) : 0;
   const previousValue = history.length > 1 ? toNumber(history[history.length - 2].valore_totale) : 0;
   const totalWealth = lastValue || cash;
   const delta = previousValue > 0 ? ((totalWealth - previousValue) / previousValue) * 100 : 0;
   const positiveDelta = delta >= 0;
 
-  const polylinePoints = chart.values
-    .map((value, index) => {
-      const x = chart.values.length > 1 ? (index / (chart.values.length - 1)) * 100 : 0;
-      const y = 100 - ((value - minChart) / chartSpan) * 100;
-      return `${x},${y}`;
-    })
-    .join(' ');
+  const filteredTransactions = useMemo(() => {
+    const now = Date.now();
 
-  const areaPoints = `${polylinePoints} 100,100 0,100`;
+    return transactions.filter((tx) => {
+      if (historyTypeFilter !== 'ALL' && tx.tipo !== historyTypeFilter) {
+        return false;
+      }
+
+      if (historyStatusFilter !== 'ALL' && tx.stato !== historyStatusFilter) {
+        return false;
+      }
+
+      if (historyPeriodFilter === 'ALL') {
+        return true;
+      }
+
+      const days = historyPeriodFilter === '7D'
+        ? 7
+        : historyPeriodFilter === '30D'
+          ? 30
+          : historyPeriodFilter === '90D'
+            ? 90
+            : 365;
+
+      const txTime = new Date(tx.created_at).getTime();
+      if (!Number.isFinite(txTime)) {
+        return false;
+      }
+
+      return now - txTime <= days * 24 * 60 * 60 * 1000;
+    });
+  }, [historyPeriodFilter, historyStatusFilter, historyTypeFilter, transactions]);
 
   useEffect(() => {
     const q = searchTerm.trim();
@@ -378,7 +404,7 @@ export function WorkspacePreviewSection() {
               searchResults.map((stock) => (
                 <div
                   key={stock.id_stock}
-                  onClick={() => navigate(`/stocks/${stock.id_stock}`, { state: { stock } })}
+                  onClick={() => navigate(buildPersonalStockHref(stock.id_stock), { state: { stock } })}
                   className="flex cursor-pointer items-center justify-between rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
                 >
                   <div>
@@ -395,12 +421,12 @@ export function WorkspacePreviewSection() {
 
       <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Total Wealth</p>
+          <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Cash Balance</p>
           <div className="flex items-baseline gap-3">
             <h2 className="flex items-center text-4xl font-bold tracking-tight text-slate-100 md:text-5xl">
               <span className="mr-1">$</span>
               <Counter
-                value={totalWealth}
+                value={cash}
                 fontSize={44}
                 padding={4}
                 gap={1}
@@ -413,17 +439,13 @@ export function WorkspacePreviewSection() {
                 counterStyle={{ paddingLeft: 0, paddingRight: 0 }}
               />
             </h2>
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${positiveDelta ? 'bg-violet-500/10 text-violet-400' : 'bg-rose-500/10 text-rose-400'}`}>
-              <span className="material-symbols-outlined mr-1 text-sm">{positiveDelta ? 'trending_up' : 'trending_down'}</span>
-              {positiveDelta ? '+' : ''}{delta.toFixed(2)}%
-            </span>
           </div>
           <div className="flex items-center gap-2 pt-2">
-            <p className="text-sm text-slate-500">Cash Balance:</p>
+            <p className="text-sm text-slate-500">Total Wealth:</p>
             <p className="flex items-center text-sm font-bold text-slate-100">
               <span className="mr-0.5">$</span>
               <Counter
-                value={cash}
+                value={totalWealth}
                 fontSize={16}
                 padding={2}
                 gap={1}
@@ -436,6 +458,10 @@ export function WorkspacePreviewSection() {
                 counterStyle={{ paddingLeft: 0, paddingRight: 0 }}
               />
             </p>
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${positiveDelta ? 'bg-violet-500/10 text-violet-400' : 'bg-rose-500/10 text-rose-400'}`}>
+              <span className="material-symbols-outlined mr-1 text-sm">{positiveDelta ? 'trending_up' : 'trending_down'}</span>
+              {positiveDelta ? '+' : ''}{delta.toFixed(2)}%
+            </span>
           </div>
         </div>
         <div className="relative w-full md:w-auto">
@@ -571,45 +597,7 @@ export function WorkspacePreviewSection() {
         document.body,
       ) : null}
 
-      <div className="violet-underlight relative overflow-hidden rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-6">
-        <div className="absolute -left-24 -top-24 size-48 bg-violet-500/10 blur-[100px]" />
-        <div className="relative z-10 mb-8 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-slate-100">Portfolio Performance</h3>
-          <div className="flex rounded-lg border border-[#1f1f2e] bg-[#0a0a0c]/60 p-1">
-            {(['1D', '1W', '1M', '1Y', 'ALL'] as RangeKey[]).map((key) => (
-              <button
-                key={key}
-                onClick={() => setRange(key)}
-                className={`rounded-md px-4 py-1.5 text-xs font-bold ${range === key ? 'bg-violet-500 text-white' : 'text-slate-500 hover:text-slate-100'}`}
-              >
-                {key}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="relative z-10 mt-4 h-[280px] w-full">
-          <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="wsChartFill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#a855f7" stopOpacity="0.30" />
-                <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <line x1="0" y1="20" x2="100" y2="20" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-            <line x1="0" y1="50" x2="100" y2="50" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-            <line x1="0" y1="80" x2="100" y2="80" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-            <polygon points={areaPoints} fill="url(#wsChartFill)" />
-            <polyline points={polylinePoints} fill="none" stroke="#a855f7" strokeWidth="0.8" strokeLinecap="round" />
-          </svg>
-        </div>
-
-        <div className="relative z-10 mt-4 flex justify-between gap-2 overflow-x-auto text-[11px] font-medium uppercase tracking-widest text-slate-500">
-          {chart.labels.map((label, idx) => (
-            <span key={`${label}-${idx}`} className="shrink-0">{label}</span>
-          ))}
-        </div>
-      </div>
+      <PortfolioPerformanceChart history={history} title="Portfolio Performance" />
 
       <div className="space-y-4">
         <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
@@ -641,34 +629,79 @@ export function WorkspacePreviewSection() {
         {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
         {!loading && !error && activeTab === 'assets' ? (
-          <div className="grid grid-cols-1 gap-4">
-            {holdings.length === 0 ? <p className="text-sm text-slate-400">Nessuna azione in possesso.</p> : null}
-            {holdings.map((item) => (
-              <div
-                key={item.id_stock}
-                onClick={() => navigate(`/stocks/${item.id_stock}`, { state: { stock: item } })}
-                className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-all hover:bg-[#1f1f2e]/40"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex size-12 items-center justify-center rounded-xl bg-slate-100 text-lg font-bold text-[#0a0a0c]">
-                    {item.id_stock}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-100">{item.nome_societa}</h4>
-                    <p className="text-xs text-slate-500">{toNumber(item.numero).toFixed(6)} Shares</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-slate-100">{toCurrency(toNumber(item.prezzo_medio_acquisto))}</p>
-                  <p className="text-xs font-semibold text-slate-400">Avg Buy Price</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <HoldingsDonutPanel
+            items={holdings}
+            currentPrices={currentPrices}
+            onSelect={(idStock) => navigate(buildPersonalStockHref(idStock))}
+            emptyLabel="Nessuna azione in possesso."
+          />
         ) : null}
 
         {!loading && !error && activeTab === 'history' ? (
-          <div className="overflow-hidden rounded-xl border border-[#1f1f2e]">
+          <div className="space-y-4">
+            <div className="rounded-xl border border-[#23243a] bg-[#11121c] p-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="inline-flex items-center gap-1 rounded-full border border-violet-500/20 bg-[#0c0d16] p-1">
+                  {([
+                    { id: 'ALL', label: 'All types' },
+                    { id: 'Buy', label: 'Buy' },
+                    { id: 'Sell', label: 'Sell' },
+                  ] as const).map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setHistoryTypeFilter(option.id)}
+                      className={`${historyTypeFilter === option.id ? '' : 'text-slate-300 hover:text-white'} relative rounded-full px-3 py-1.5 text-xs font-semibold transition`}
+                    >
+                      {historyTypeFilter === option.id ? (
+                        <motion.span
+                          layoutId="personal-history-type-bubble"
+                          className="absolute inset-0 z-10 rounded-full bg-violet-500 shadow-lg shadow-violet-500/25"
+                          transition={{ type: 'spring', bounce: 0.2, duration: 0.55 }}
+                        />
+                      ) : null}
+                      <span className="relative z-20">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-400">
+                    Period
+                    <select
+                      value={historyPeriodFilter}
+                      onChange={(event) => setHistoryPeriodFilter(event.target.value as HistoryPeriodFilter)}
+                      className="ml-2 rounded-lg border border-[#2a2c44] bg-[#17192a] px-2.5 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-violet-500"
+                    >
+                      <option value="ALL">All time</option>
+                      <option value="7D">Last 7 days</option>
+                      <option value="30D">Last 30 days</option>
+                      <option value="90D">Last 90 days</option>
+                      <option value="365D">Last 365 days</option>
+                    </select>
+                  </label>
+
+                  <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-400">
+                    Status
+                    <select
+                      value={historyStatusFilter}
+                      onChange={(event) => setHistoryStatusFilter(event.target.value as HistoryStatusFilter)}
+                      className="ml-2 rounded-lg border border-[#2a2c44] bg-[#17192a] px-2.5 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-violet-500"
+                    >
+                      <option value="ALL">All</option>
+                      <option value="Pending">Pending</option>
+                      <option value="Executed">Executed</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <p className="mt-2 text-[11px] uppercase tracking-[0.13em] text-slate-500">
+                Showing {filteredTransactions.length} of {transactions.length} transactions
+              </p>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border border-[#1f1f2e]">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -683,12 +716,12 @@ export function WorkspacePreviewSection() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1f1f2e] bg-[#0f0f14]">
-                  {transactions.length === 0 ? (
+                  {filteredTransactions.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-4 text-slate-400" colSpan={7}>Nessuna transazione disponibile.</td>
+                      <td className="px-4 py-4 text-slate-400" colSpan={7}>Nessuna transazione disponibile con i filtri selezionati.</td>
                     </tr>
                   ) : (
-                    transactions.map((tx) => (
+                    filteredTransactions.map((tx) => (
                       <tr key={tx.id_transazione} className="hover:bg-[#1f1f2e]/35">
                         <td className="px-4 py-3 text-slate-300">{new Date(tx.created_at).toLocaleString('it-IT')}</td>
                         <td className="px-4 py-3 font-semibold text-slate-100">{tx.id_stock}</td>
@@ -726,6 +759,7 @@ export function WorkspacePreviewSection() {
               </table>
             </div>
           </div>
+          </div>
         ) : null}
 
         {!loading && !error && activeTab === 'watchlist' ? (
@@ -734,7 +768,7 @@ export function WorkspacePreviewSection() {
             {watchlist.map((row) => (
               <div
                 key={row.id_stock}
-                onClick={() => navigate(`/stocks/${row.id_stock}`, { state: { stock: row } })}
+                onClick={() => navigate(buildPersonalStockHref(row.id_stock), { state: { stock: row } })}
                 className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-colors hover:bg-[#1f1f2e]/40"
               >
                 <div className="flex items-center gap-3">

@@ -75,6 +75,7 @@ model Stock {
   id_stock      String @id @db.VarChar(10)  // es. 'AAPL'
   nome_societa  String @db.VarChar(150)
   settore       String @db.VarChar(50)
+  prezzo_attuale Decimal? @db.Decimal(18, 6)
 
   transazioni     Transazione[]
   watchlist       Watchlist[]

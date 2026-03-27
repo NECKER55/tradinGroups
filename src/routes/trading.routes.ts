@@ -21,6 +21,7 @@ import {
   getPortfolioHoldings,
   getProfileTransactions,
   getMyWatchlist,
+  getStocksCurrentPrices,
   removeStockFromWatchlist,
   searchPeopleByUsernameOrId,
   searchStocksByPrefix,
@@ -38,6 +39,11 @@ tradingRouter.get(
 tradingRouter.get(
   '/stocks/search',
   searchStocksByPrefix
+);
+
+tradingRouter.get(
+  '/stocks/current-prices',
+  getStocksCurrentPrices
 );
 
 tradingRouter.get(

@@ -92,8 +92,22 @@ export interface StockSearchResponse {
   results: StockSearchItem[];
 }
 
-export async function getPrivateBalance(): Promise<PrivateBalanceResponse> {
-  return apiRequest<PrivateBalanceResponse>(ROUTES.TRADING.PRIVATE_BALANCE, { method: 'GET' });
+export interface CurrentStockPriceItem {
+  id_stock: string;
+  prezzo_attuale: string | null;
+}
+
+export interface CurrentStockPricesResponse {
+  count: number;
+  prices: CurrentStockPriceItem[];
+}
+
+export async function getPrivateBalance(portfolioId?: number): Promise<PrivateBalanceResponse> {
+  const query = Number.isFinite(portfolioId)
+    ? `?${new URLSearchParams({ id_portafoglio: String(portfolioId) }).toString()}`
+    : '';
+
+  return apiRequest<PrivateBalanceResponse>(`${ROUTES.TRADING.PRIVATE_BALANCE}${query}`, { method: 'GET' });
 }
 
 export async function getPortfolioHoldings(portfolioId: number): Promise<HoldingsResponse> {
@@ -123,6 +137,17 @@ export async function updatePrivateBalance(payload: UpdatePrivateBalancePayload)
 export async function searchStocks(q: string, limit = 20): Promise<StockSearchResponse> {
   const query = new URLSearchParams({ q, limit: String(limit) });
   return apiRequest<StockSearchResponse>(`${ROUTES.TRADING.STOCKS_SEARCH}?${query.toString()}`, { method: 'GET' });
+}
+
+export async function getStocksCurrentPrices(stockIds: string[]): Promise<CurrentStockPricesResponse> {
+  const ids = [...new Set(stockIds.map((id) => id.trim().toUpperCase()).filter((id) => id.length > 0))];
+
+  if (ids.length === 0) {
+    return { count: 0, prices: [] };
+  }
+
+  const query = new URLSearchParams({ ids: ids.join(',') });
+  return apiRequest<CurrentStockPricesResponse>(`${ROUTES.TRADING.STOCKS_CURRENT_PRICES}?${query.toString()}`, { method: 'GET' });
 }
 
 export async function cancelPendingOrder(idTransazione: number): Promise<{ message: string }> {

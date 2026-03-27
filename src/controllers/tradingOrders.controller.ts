@@ -44,6 +44,10 @@ const PrefixSearchQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).default(50),
 });
 
+const CurrentPricesQuerySchema = z.object({
+  ids: z.string().trim().min(1).max(2000),
+});
+
 const PortfolioHoldingsParamsSchema = z.object({
   id_portafoglio: z.coerce.number().int().positive(),
 });
@@ -394,6 +398,50 @@ export async function searchStocksByPrefix(req: Request, res: Response): Promise
     q: parsed.data.q,
     count: rows.length,
     results: rows,
+  });
+}
+
+export async function getStocksCurrentPrices(req: Request, res: Response): Promise<void> {
+  const parsed = CurrentPricesQuerySchema.safeParse(req.query);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Query prezzi non valida.',
+    });
+    return;
+  }
+
+  const ids = [...new Set(
+    parsed.data.ids
+      .split(',')
+      .map((id) => id.trim().toUpperCase())
+      .filter((id) => id.length > 0 && id.length <= 10),
+  )];
+
+  if (ids.length === 0) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: 'Nessun ticker valido specificato.',
+    });
+    return;
+  }
+
+  const rows = await prisma.stock.findMany({
+    where: { id_stock: { in: ids } },
+    select: {
+      id_stock: true,
+      prezzo_attuale: true,
+    },
+    orderBy: { id_stock: 'asc' },
+  });
+
+  res.json({
+    count: rows.length,
+    prices: rows.map((row) => ({
+      id_stock: row.id_stock,
+      prezzo_attuale: row.prezzo_attuale?.toString() ?? null,
+    })),
   });
 }
 

@@ -138,6 +138,29 @@ function computePortfolioTotal(
   return new Prisma.Decimal(total.toFixed(2));
 }
 
+async function syncCurrentStockPrices(quotes: Map<string, number>): Promise<void> {
+  if (quotes.size === 0) return;
+
+  const updates: Prisma.PrismaPromise<unknown>[] = [];
+
+  for (const [id_stock, price] of quotes.entries()) {
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    updates.push(
+      prisma.stock.updateMany({
+        where: { id_stock },
+        data: {
+          prezzo_attuale: new Prisma.Decimal(price.toFixed(6)),
+        },
+      }),
+    );
+  }
+
+  if (updates.length > 0) {
+    await prisma.$transaction(updates);
+  }
+}
+
 export async function runPortfolioValuationJobOnce(): Promise<void> {
   if (isValuationRunning) {
     console.log('[jobs] Portfolio valuation gia in esecuzione, skip.');
@@ -162,6 +185,9 @@ export async function runPortfolioValuationJobOnce(): Promise<void> {
     const quotes = tickers.length > 0
       ? await fetchQuotesForTickers(tickers)
       : new Map<string, number>();
+
+    // Mantiene sempre allineata la quotazione corrente per titolo.
+    await syncCurrentStockPrices(quotes);
 
     const pendingByPortfolio = new Map<number, SnapshotPending[]>();
     for (const order of pendingOrders) {

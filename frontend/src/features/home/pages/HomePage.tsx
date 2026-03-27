@@ -3,13 +3,18 @@ import { HeroSection } from '../components/HeroSection';
 import { WorkspacePreviewSection } from '../components/WorkspacePreviewSection';
 import { useAuth } from '../../auth/context/AuthContext';
 import { Link, useLocation } from 'react-router-dom';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
+import { GroupSummary, searchGroups } from '../../social/api/socialHubApi';
 
 export function HomePage() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
   const homeContainerRef = useRef<HTMLElement | null>(null);
+  const [groupSearchTerm, setGroupSearchTerm] = useState('');
+  const [groupSearchLoading, setGroupSearchLoading] = useState(false);
+  const [groupSearchError, setGroupSearchError] = useState<string | null>(null);
+  const [groupResults, setGroupResults] = useState<GroupSummary[]>([]);
 
   useEffect(() => {
     if (!location.hash) return;
@@ -22,6 +27,40 @@ export function HomePage() {
     const top = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
     window.scrollTo({ top, behavior: 'smooth' });
   }, [location]);
+
+  useEffect(() => {
+    const query = groupSearchTerm.trim();
+
+    if (!query) {
+      setGroupSearchLoading(false);
+      setGroupSearchError(null);
+      setGroupResults([]);
+      return;
+    }
+
+    let active = true;
+    setGroupSearchLoading(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await searchGroups(query, 30);
+        if (!active) return;
+        setGroupResults(res.results);
+        setGroupSearchError(null);
+      } catch (err) {
+        if (!active) return;
+        setGroupSearchError(err instanceof Error ? err.message : 'Ricerca gruppi non riuscita.');
+        setGroupResults([]);
+      } finally {
+        if (active) setGroupSearchLoading(false);
+      }
+    }, 260);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [groupSearchTerm]);
 
   useEffect(() => {
     const root = homeContainerRef.current;
@@ -111,8 +150,17 @@ export function HomePage() {
 
   return (
     <section ref={homeContainerRef}>
-      <HeroSection />
-      <FeaturedSquadsSection />
+      <HeroSection
+        searchTerm={groupSearchTerm}
+        onSearchTermChange={setGroupSearchTerm}
+        searchLoading={groupSearchLoading}
+      />
+      <FeaturedSquadsSection
+        searchTerm={groupSearchTerm}
+        searchLoading={groupSearchLoading}
+        searchError={groupSearchError}
+        groupResults={groupResults}
+      />
       {isAuthenticated ? (
         <div className="mx-auto w-full max-w-[1200px] px-6 pb-3">
           <Link

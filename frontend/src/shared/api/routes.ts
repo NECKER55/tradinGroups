@@ -19,6 +19,7 @@ export const ROUTES = {
     WATCHLIST_BY_STOCK: (stockId: string) => `/trading/watchlist/${stockId}`,
     PROFILE_TRANSACTIONS: '/trading/transactions/profile',
     STOCKS_SEARCH: '/trading/stocks/search',
+    STOCKS_CURRENT_PRICES: '/trading/stocks/current-prices',
     USERS_SEARCH: '/trading/users/search',
     FRIENDSHIPS: '/trading/friendships',
     FRIENDSHIP_REQUESTS: '/trading/friendships/requests',

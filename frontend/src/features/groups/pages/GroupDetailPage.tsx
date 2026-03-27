@@ -3,7 +3,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { gsap } from 'gsap';
 import { useNavigate, useParams } from 'react-router-dom';
 import Counter from '../../../shared/components/Counter';
+import { HoldingsDonutPanel } from '../../../shared/components/HoldingsDonutPanel';
 import LightRays from '../../../shared/components/LightRays';
+import { PortfolioPerformanceChart } from '../../../shared/components/PortfolioPerformanceChart';
 import { useAuth } from '../../auth/context/AuthContext';
 import {
   cancelGroupInvite,
@@ -29,12 +31,14 @@ import {
   updateGroupName,
   updateGroupPhoto,
 } from '../api/groupDetailApi';
-import { StockSearchItem, searchStocks } from '../../home/api/personalWorkspaceApi';
+import { getStocksCurrentPrices, StockSearchItem, searchStocks } from '../../home/api/personalWorkspaceApi';
 import { getMySentGroupInvites, PeopleSearchResult, searchPeople } from '../../social/api/socialHubApi';
 
 type WorkspaceTab = 'assets' | 'history' | 'watchlist';
-type RangeKey = '1W' | '1M' | '1Y' | 'ALL';
 type BudgetAction = 'deposit' | 'withdraw';
+type HistoryPeriodFilter = 'ALL' | '7D' | '30D' | '90D' | '365D';
+type HistoryTypeFilter = 'ALL' | 'Buy' | 'Sell';
+type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed' | 'Failed';
 
 type PendingAction =
   | { kind: 'leave'; newOwnerId: number | null }
@@ -54,65 +58,6 @@ function toCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 }
 
-function dateKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function monthKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function buildSeries(history: GroupWorkspaceHistoryPoint[], range: RangeKey): { labels: string[]; values: number[] } {
-  const dayMap = new Map<string, number>();
-  const monthMap = new Map<string, number>();
-
-  for (const row of history) {
-    const value = toNumber(row.valore_totale);
-    dayMap.set(row.data, value);
-    monthMap.set(row.data.slice(0, 7), value);
-  }
-
-  const now = new Date();
-
-  if (range === '1W' || range === '1M') {
-    const span = range === '1W' ? 7 : 30;
-    const labels: string[] = [];
-    const values: number[] = [];
-    for (let i = span - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      labels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
-      values.push(dayMap.get(dateKey(d)) ?? 0);
-    }
-    return { labels, values };
-  }
-
-  if (range === '1Y') {
-    const labels: string[] = [];
-    const values: number[] = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      labels.push(d.toLocaleString('en-US', { month: 'short' }).toUpperCase());
-      values.push(monthMap.get(monthKey(d)) ?? 0);
-    }
-    return { labels, values };
-  }
-
-  const first = history.length ? new Date(history[0].data) : new Date(now.getFullYear(), now.getMonth(), 1);
-  const labels: string[] = [];
-  const values: number[] = [];
-  const cursor = new Date(first.getFullYear(), first.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  while (cursor <= end) {
-    labels.push(`${cursor.toLocaleString('en-US', { month: 'short' }).toUpperCase()} ${String(cursor.getFullYear()).slice(-2)}`);
-    values.push(monthMap.get(monthKey(cursor)) ?? 0);
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-
-  return { labels, values };
-}
-
 function roleBadgeClass(role: string): string {
   if (role === 'Owner') return 'border-amber-400/40 bg-amber-500/10 text-amber-200';
   if (role === 'Admin') return 'border-violet-400/40 bg-violet-500/10 text-violet-200';
@@ -126,7 +71,6 @@ export function GroupDetailPage() {
   const groupContainerRef = useRef<HTMLElement | null>(null);
 
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('assets');
-  const [range, setRange] = useState<RangeKey>('1M');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -139,7 +83,12 @@ export function GroupDetailPage() {
   const [workspaceTransactions, setWorkspaceTransactions] = useState<GroupWorkspaceTransaction[]>([]);
   const [workspaceWatchlist, setWorkspaceWatchlist] = useState<GroupWorkspaceWatchlistItem[]>([]);
   const [groupRole, setGroupRole] = useState<GroupMember['ruolo'] | null>(null);
+  const [groupPortfolioId, setGroupPortfolioId] = useState<number | null>(null);
   const [cash, setCash] = useState(0);
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const [historyPeriodFilter, setHistoryPeriodFilter] = useState<HistoryPeriodFilter>('ALL');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('ALL');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<HistoryStatusFilter>('ALL');
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -168,6 +117,24 @@ export function GroupDetailPage() {
 
   const parsedGroupId = Number(groupId);
 
+  function buildGroupStockHref(stockId: string): string {
+    const params = new URLSearchParams({ scope: 'group' });
+    if (Number.isFinite(parsedGroupId)) params.set('groupId', String(parsedGroupId));
+    if (groupPortfolioId) params.set('portfolioId', String(groupPortfolioId));
+    return `/stocks/${stockId}?${params.toString()}`;
+  }
+
+  function pricesToMap(prices: Array<{ id_stock: string; prezzo_attuale: string | null }>): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const row of prices) {
+      const value = Number(row.prezzo_attuale ?? 0);
+      if (Number.isFinite(value) && value > 0) {
+        out[row.id_stock] = value;
+      }
+    }
+    return out;
+  }
+
   async function refreshAll(groupNumericId: number) {
     const [profile, rankingRes, workspace, membersRes] = await Promise.all([
       getGroupProfile(groupNumericId),
@@ -175,6 +142,7 @@ export function GroupDetailPage() {
       getGroupWorkspace(groupNumericId),
       getGroupMembers(groupNumericId),
     ]);
+    const pricesRes = await getStocksCurrentPrices(workspace.holdings.map((h) => h.id_stock));
 
     setGroup(profile.group);
     setRanking(rankingRes.ranking);
@@ -182,6 +150,8 @@ export function GroupDetailPage() {
     setWorkspaceHistory(workspace.history);
     setWorkspaceTransactions(workspace.transactions);
     setWorkspaceWatchlist(workspace.watchlist);
+    setCurrentPrices(pricesToMap(pricesRes.prices));
+    setGroupPortfolioId(workspace.portfolio.id_portafoglio);
     setCash(toNumber(workspace.portfolio.liquidita));
     setMembers(membersRes.members);
 
@@ -314,6 +284,36 @@ export function GroupDetailPage() {
   }, [banner]);
 
   useEffect(() => {
+    if (!Number.isFinite(parsedGroupId) || loading || error) return;
+
+    let active = true;
+
+    async function refreshWorkspaceForTab() {
+      try {
+        const workspace = await getGroupWorkspace(parsedGroupId);
+        const pricesRes = await getStocksCurrentPrices(workspace.holdings.map((h) => h.id_stock));
+        if (!active) return;
+
+        setWorkspaceHoldings(workspace.holdings);
+        setWorkspaceHistory(workspace.history);
+        setWorkspaceTransactions(workspace.transactions);
+        setWorkspaceWatchlist(workspace.watchlist);
+        setCurrentPrices(pricesToMap(pricesRes.prices));
+        setGroupPortfolioId(workspace.portfolio.id_portafoglio);
+        setCash(toNumber(workspace.portfolio.liquidita));
+      } catch {
+        if (!active) return;
+      }
+    }
+
+    void refreshWorkspaceForTab();
+
+    return () => {
+      active = false;
+    };
+  }, [activeTab, error, loading, parsedGroupId]);
+
+  useEffect(() => {
     const root = groupContainerRef.current;
     if (!root) return;
 
@@ -409,24 +409,42 @@ export function GroupDetailPage() {
     };
   }, [pendingAction, settingsOpen]);
 
-  const chart = useMemo(() => buildSeries(workspaceHistory, range), [workspaceHistory, range]);
-  const maxChart = Math.max(1, ...chart.values);
-  const minChart = Math.min(...chart.values, 0);
-  const chartSpan = Math.max(1, maxChart - minChart);
-
   const totalWealth = workspaceHistory.length
     ? toNumber(workspaceHistory[workspaceHistory.length - 1].valore_totale)
     : cash;
 
-  const polylinePoints = chart.values
-    .map((value, index) => {
-      const x = chart.values.length > 1 ? (index / (chart.values.length - 1)) * 100 : 0;
-      const y = 100 - ((value - minChart) / chartSpan) * 100;
-      return `${x},${y}`;
-    })
-    .join(' ');
+  const filteredWorkspaceTransactions = useMemo(() => {
+    const now = Date.now();
 
-  const areaPoints = `${polylinePoints} 100,100 0,100`;
+    return workspaceTransactions.filter((tx) => {
+      if (historyTypeFilter !== 'ALL' && tx.tipo !== historyTypeFilter) {
+        return false;
+      }
+
+      if (historyStatusFilter !== 'ALL' && tx.stato !== historyStatusFilter) {
+        return false;
+      }
+
+      if (historyPeriodFilter === 'ALL') {
+        return true;
+      }
+
+      const days = historyPeriodFilter === '7D'
+        ? 7
+        : historyPeriodFilter === '30D'
+          ? 30
+          : historyPeriodFilter === '90D'
+            ? 90
+            : 365;
+
+      const txTime = new Date(tx.created_at).getTime();
+      if (!Number.isFinite(txTime)) {
+        return false;
+      }
+
+      return now - txTime <= days * 24 * 60 * 60 * 1000;
+    });
+  }, [historyPeriodFilter, historyStatusFilter, historyTypeFilter, workspaceTransactions]);
 
   const isOwner = groupRole === 'Owner';
   const isAdmin = groupRole === 'Admin' || isOwner;
@@ -724,12 +742,7 @@ export function GroupDetailPage() {
                     searchResults.map((stock) => (
                       <div
                         key={stock.id_stock}
-                        onClick={() => navigate(`/stocks/${stock.id_stock}`, {
-                          state: {
-                            stock,
-                            context: { scope: 'group', groupId: parsedGroupId },
-                          },
-                        })}
+                        onClick={() => navigate(buildGroupStockHref(stock.id_stock), { state: { stock } })}
                         className="flex cursor-pointer items-center justify-between rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
                       >
                         <div>
@@ -754,12 +767,12 @@ export function GroupDetailPage() {
               </div>
 
               <div className="space-y-1">
-                <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Total Wealth (Group Portfolio)</p>
+                <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Cash Balance (Group Portfolio)</p>
                 <div className="flex items-baseline gap-3">
                   <h3 className="flex items-center text-4xl font-bold tracking-tight text-slate-100 md:text-5xl">
                     <span className="mr-1">$</span>
                     <Counter
-                      value={totalWealth}
+                      value={cash}
                       fontSize={44}
                       padding={4}
                       gap={1}
@@ -774,11 +787,11 @@ export function GroupDetailPage() {
                   </h3>
                 </div>
                 <p className="flex items-center text-sm text-slate-300">
-                  Cash Balance:
+                  Total Wealth:
                   <span className="ml-2 inline-flex items-center font-bold text-slate-100">
                     <span className="mr-0.5">$</span>
                     <Counter
-                      value={cash}
+                      value={totalWealth}
                       fontSize={16}
                       padding={2}
                       gap={1}
@@ -794,45 +807,11 @@ export function GroupDetailPage() {
                 </p>
               </div>
 
-              <div className="relative overflow-hidden rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-6">
-                <div className="absolute -left-24 -top-24 size-48 bg-violet-500/10 blur-[100px]" />
-                <div className="relative z-10 mb-8 flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-slate-100">Group Portfolio Performance</h3>
-                  <div className="flex rounded-lg border border-[#1f1f2e] bg-[#0a0a0c]/60 p-1">
-                    {(['1W', '1M', '1Y', 'ALL'] as RangeKey[]).map((key) => (
-                      <button
-                        key={key}
-                        onClick={() => setRange(key)}
-                        className={`rounded-md px-4 py-1.5 text-xs font-bold ${range === key ? 'bg-violet-500 text-white' : 'text-slate-500 hover:text-slate-100'}`}
-                      >
-                        {key}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="relative z-10 h-[280px] w-full">
-                  <svg className="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="groupChartFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="#a855f7" stopOpacity="0.30" />
-                        <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <line x1="0" y1="20" x2="100" y2="20" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-                    <line x1="0" y1="50" x2="100" y2="50" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-                    <line x1="0" y1="80" x2="100" y2="80" stroke="#1f1f2e" strokeDasharray="1.5 1.5" />
-                    <polygon points={areaPoints} fill="url(#groupChartFill)" />
-                    <polyline points={polylinePoints} fill="none" stroke="#a855f7" strokeWidth="0.8" strokeLinecap="round" />
-                  </svg>
-                </div>
-
-                <div className="relative z-10 mt-4 flex justify-between gap-2 overflow-x-auto text-[11px] font-medium uppercase tracking-widest text-slate-500">
-                  {chart.labels.map((label, idx) => (
-                    <span key={`${label}-${idx}`} className="shrink-0">{label}</span>
-                  ))}
-                </div>
-              </div>
+              <PortfolioPerformanceChart
+                history={workspaceHistory}
+                title="Group Portfolio Performance"
+                accentClassName="text-slate-100"
+              />
 
               <div className="space-y-4">
                 <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
@@ -852,37 +831,80 @@ export function GroupDetailPage() {
                 </div>
 
                 {activeTab === 'assets' ? (
-                  <div className="grid grid-cols-1 gap-4">
-                    {workspaceHoldings.length === 0 ? <p className="text-sm text-slate-400">Nessuna azione in possesso nel portafoglio gruppo.</p> : null}
-                    {workspaceHoldings.map((item) => (
-                      <div
-                        key={item.id_stock}
-                        onClick={() => navigate(`/stocks/${item.id_stock}`, {
-                          state: {
-                            stock: item,
-                            context: { scope: 'group', groupId: parsedGroupId },
-                          },
-                        })}
-                        className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-all hover:bg-[#1f1f2e]/40"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="flex size-12 items-center justify-center rounded-xl bg-slate-100 text-lg font-bold text-[#0a0a0c]">{item.id_stock}</div>
-                          <div>
-                            <h4 className="font-bold text-slate-100">{item.nome_societa}</h4>
-                            <p className="text-xs text-slate-500">{toNumber(item.numero).toFixed(6)} Shares</p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold text-slate-100">{toCurrency(toNumber(item.prezzo_medio_acquisto))}</p>
-                          <p className="text-xs font-semibold text-slate-400">Avg Buy Price</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <HoldingsDonutPanel
+                    items={workspaceHoldings}
+                    currentPrices={currentPrices}
+                    onSelect={(idStock) => navigate(buildGroupStockHref(idStock))}
+                    emptyLabel="Nessuna azione in possesso nel portafoglio gruppo."
+                  />
                 ) : null}
 
                 {activeTab === 'history' ? (
-                  <div className="overflow-hidden rounded-xl border border-[#1f1f2e]">
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#23243a] bg-[#11121c] p-3">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="inline-flex items-center gap-1 rounded-full border border-violet-500/20 bg-[#0c0d16] p-1">
+                          {([
+                            { id: 'ALL', label: 'All types' },
+                            { id: 'Buy', label: 'Buy' },
+                            { id: 'Sell', label: 'Sell' },
+                          ] as const).map((option) => (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => setHistoryTypeFilter(option.id)}
+                              className={`${historyTypeFilter === option.id ? '' : 'text-slate-300 hover:text-white'} relative rounded-full px-3 py-1.5 text-xs font-semibold transition`}
+                            >
+                              {historyTypeFilter === option.id ? (
+                                <motion.span
+                                  layoutId="group-history-type-bubble"
+                                  className="absolute inset-0 z-10 rounded-full bg-violet-500 shadow-lg shadow-violet-500/25"
+                                  transition={{ type: 'spring', bounce: 0.2, duration: 0.55 }}
+                                />
+                              ) : null}
+                              <span className="relative z-20">{option.label}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-400">
+                            Period
+                            <select
+                              value={historyPeriodFilter}
+                              onChange={(event) => setHistoryPeriodFilter(event.target.value as HistoryPeriodFilter)}
+                              className="ml-2 rounded-lg border border-[#2a2c44] bg-[#17192a] px-2.5 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-violet-500"
+                            >
+                              <option value="ALL">All time</option>
+                              <option value="7D">Last 7 days</option>
+                              <option value="30D">Last 30 days</option>
+                              <option value="90D">Last 90 days</option>
+                              <option value="365D">Last 365 days</option>
+                            </select>
+                          </label>
+
+                          <label className="text-[11px] font-semibold uppercase tracking-[0.13em] text-slate-400">
+                            Status
+                            <select
+                              value={historyStatusFilter}
+                              onChange={(event) => setHistoryStatusFilter(event.target.value as HistoryStatusFilter)}
+                              className="ml-2 rounded-lg border border-[#2a2c44] bg-[#17192a] px-2.5 py-1.5 text-xs font-semibold text-slate-100 outline-none focus:border-violet-500"
+                            >
+                              <option value="ALL">All</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Executed">Executed</option>
+                              <option value="Failed">Failed</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+
+                      <p className="mt-2 text-[11px] uppercase tracking-[0.13em] text-slate-500">
+                        Showing {filteredWorkspaceTransactions.length} of {workspaceTransactions.length} transactions
+                      </p>
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-[#1f1f2e]">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-sm">
                         <thead>
@@ -896,12 +918,12 @@ export function GroupDetailPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#1f1f2e] bg-[#0f0f14]">
-                          {workspaceTransactions.length === 0 ? (
+                          {filteredWorkspaceTransactions.length === 0 ? (
                             <tr>
-                              <td className="px-4 py-4 text-slate-400" colSpan={6}>Nessuna transazione disponibile.</td>
+                              <td className="px-4 py-4 text-slate-400" colSpan={6}>Nessuna transazione disponibile con i filtri selezionati.</td>
                             </tr>
                           ) : (
-                            workspaceTransactions.map((tx) => (
+                            filteredWorkspaceTransactions.map((tx) => (
                               <tr key={tx.id_transazione} className="hover:bg-[#1f1f2e]/35">
                                 <td className="px-4 py-3 text-slate-300">{new Date(tx.created_at).toLocaleString('it-IT')}</td>
                                 <td className="px-4 py-3 font-semibold text-slate-100">{tx.id_stock}</td>
@@ -926,6 +948,7 @@ export function GroupDetailPage() {
                       </table>
                     </div>
                   </div>
+                  </div>
                 ) : null}
 
                 {activeTab === 'watchlist' ? (
@@ -934,12 +957,7 @@ export function GroupDetailPage() {
                     {workspaceWatchlist.map((row) => (
                       <div
                         key={row.id_stock}
-                        onClick={() => navigate(`/stocks/${row.id_stock}`, {
-                          state: {
-                            stock: row,
-                            context: { scope: 'group', groupId: parsedGroupId },
-                          },
-                        })}
+                        onClick={() => navigate(buildGroupStockHref(row.id_stock), { state: { stock: row } })}
                         className="flex cursor-pointer items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-colors hover:bg-[#1f1f2e]/40"
                       >
                         <div className="flex items-center gap-3">

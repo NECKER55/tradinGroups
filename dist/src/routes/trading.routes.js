@@ -9,6 +9,7 @@ const privatePortfolio_1 = require("../middleware/privatePortfolio");
 const tradingRouter = (0, express_1.Router)();
 tradingRouter.get('/transactions/profile', tradingOrders_controller_1.getProfileTransactions);
 tradingRouter.get('/stocks/search', tradingOrders_controller_1.searchStocksByPrefix);
+tradingRouter.get('/stocks/current-prices', tradingOrders_controller_1.getStocksCurrentPrices);
 tradingRouter.get('/users/search', auth_1.optionalAuth, tradingOrders_controller_1.searchPeopleByUsernameOrId);
 tradingRouter.post('/friendships/requests', auth_1.authenticate, friendships_controller_1.sendFriendRequest);
 tradingRouter.get('/friendships', auth_1.authenticate, friendships_controller_1.getMyFriendships);

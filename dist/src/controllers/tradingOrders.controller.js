@@ -4,6 +4,7 @@ exports.createOrder = createOrder;
 exports.cancelPendingOrder = cancelPendingOrder;
 exports.getProfileTransactions = getProfileTransactions;
 exports.searchStocksByPrefix = searchStocksByPrefix;
+exports.getStocksCurrentPrices = getStocksCurrentPrices;
 exports.searchPeopleByUsernameOrId = searchPeopleByUsernameOrId;
 exports.getPortfolioHoldings = getPortfolioHoldings;
 exports.getPortfolioBalanceHistory = getPortfolioBalanceHistory;
@@ -48,6 +49,9 @@ const ProfileTransactionsQuerySchema = zod_1.z.object({
 const PrefixSearchQuerySchema = zod_1.z.object({
     q: zod_1.z.string().trim().min(1).max(50),
     limit: zod_1.z.coerce.number().int().positive().max(100).default(50),
+});
+const CurrentPricesQuerySchema = zod_1.z.object({
+    ids: zod_1.z.string().trim().min(1).max(2000),
 });
 const PortfolioHoldingsParamsSchema = zod_1.z.object({
     id_portafoglio: zod_1.z.coerce.number().int().positive(),
@@ -343,6 +347,42 @@ async function searchStocksByPrefix(req, res) {
         q: parsed.data.q,
         count: rows.length,
         results: rows,
+    });
+}
+async function getStocksCurrentPrices(req, res) {
+    const parsed = CurrentPricesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+        res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: parsed.error.errors[0]?.message ?? 'Query prezzi non valida.',
+        });
+        return;
+    }
+    const ids = [...new Set(parsed.data.ids
+            .split(',')
+            .map((id) => id.trim().toUpperCase())
+            .filter((id) => id.length > 0 && id.length <= 10))];
+    if (ids.length === 0) {
+        res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: 'Nessun ticker valido specificato.',
+        });
+        return;
+    }
+    const rows = await prisma_1.prisma.stock.findMany({
+        where: { id_stock: { in: ids } },
+        select: {
+            id_stock: true,
+            prezzo_attuale: true,
+        },
+        orderBy: { id_stock: 'asc' },
+    });
+    res.json({
+        count: rows.length,
+        prices: rows.map((row) => ({
+            id_stock: row.id_stock,
+            prezzo_attuale: row.prezzo_attuale?.toString() ?? null,
+        })),
     });
 }
 async function searchPeopleByUsernameOrId(req, res) {
