@@ -13,4 +13,5 @@ authRouter.put('/me/password', auth_1.authenticate, auth_controller_1.changeMyPa
 authRouter.put('/me/username', auth_1.authenticate, auth_controller_1.changeMyUsername);
 authRouter.put('/me/photo', auth_1.authenticate, auth_controller_1.changeMyPhoto);
 authRouter.put('/me/email', auth_1.authenticate, auth_controller_1.changeMyEmail);
+authRouter.delete('/users/:id_persona', auth_1.authenticate, auth_controller_1.deleteUserAccount);
 exports.default = authRouter;

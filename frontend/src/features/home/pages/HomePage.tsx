@@ -49,7 +49,7 @@ export function HomePage() {
         setGroupSearchError(null);
       } catch (err) {
         if (!active) return;
-        setGroupSearchError(err instanceof Error ? err.message : 'Ricerca gruppi non riuscita.');
+        setGroupSearchError(err instanceof Error ? err.message : 'Group search failed.');
         setGroupResults([]);
       } finally {
         if (active) setGroupSearchLoading(false);
@@ -174,7 +174,7 @@ export function HomePage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-violet-200/80">Community Preview</p>
                 <h3 className="mt-1 text-2xl font-black tracking-tight text-white md:text-3xl">Open Social Hub</h3>
                 <p className="mt-2 max-w-xl text-sm text-violet-100/85">
-                  Requests, squads e connessioni in tempo reale: entra nella sezione social e gestisci tutto da un unico pannello.
+                  Requests, squads, and real-time connections: open the social section and manage everything from one panel.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-wide">
                   <span className="rounded-full border border-violet-300/30 bg-violet-400/10 px-3 py-1 text-violet-100">Requests</span>

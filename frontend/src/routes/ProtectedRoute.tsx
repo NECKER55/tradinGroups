@@ -7,7 +7,7 @@ export function ProtectedRoute() {
   if (loading) {
     return (
       <div className="grid min-h-screen place-items-center bg-obsidian text-canvas">
-        <p className="text-sm tracking-wide text-canvas/80">Caricamento sessione...</p>
+        <p className="text-sm tracking-wide text-canvas/80">Loading session...</p>
       </div>
     );
   }

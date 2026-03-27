@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { GroupSummary } from '../../social/api/socialHubApi';
+import { getGroupRanking } from '../../groups/api/groupDetailApi';
 
 type FeaturedSquadsSectionProps = {
   searchTerm: string;
@@ -15,9 +16,9 @@ type SquadCard = {
   id: number | null;
   badge: string;
   name: string;
-  description: string;
   privacy: 'Public' | 'Private';
   cta: string;
+  topFour: Array<{ label: string; value: string }>;
 };
 
 const featuredSquads: SquadCard[] = [
@@ -25,36 +26,58 @@ const featuredSquads: SquadCard[] = [
     id: null,
     badge: 'Featured #1',
     name: 'Wall Street Wolves',
-    description: 'Momentum strategies and disciplined risk control, every session.',
     privacy: 'Public',
     cta: 'Open Group',
+    topFour: [
+      { label: 'Alpha_Ghost', value: '$412k' },
+      { label: 'QFlow', value: '$386k' },
+      { label: 'ZenTrader', value: '$351k' },
+      { label: 'CandleBorn', value: '$330k' },
+    ],
   },
   {
     id: null,
     badge: 'Featured #2',
     name: 'Crypto Titans',
-    description: 'Macro + crypto trend plays coordinated by experienced swing traders.',
     privacy: 'Private',
     cta: 'Open Group',
+    topFour: [
+      { label: 'BTC_Reaper', value: '$297k' },
+      { label: 'Luna_Grid', value: '$271k' },
+      { label: 'VolShift', value: '$253k' },
+      { label: 'DeltaBear', value: '$240k' },
+    ],
   },
   {
     id: null,
     badge: 'Featured #3',
     name: 'Quant Pulse Lab',
-    description: 'Data-driven setup sharing focused on consistency over hype.',
     privacy: 'Public',
     cta: 'Open Group',
+    topFour: [
+      { label: 'MeanRev_1', value: '$218k' },
+      { label: 'Sigma_Byte', value: '$205k' },
+      { label: 'NeuralTape', value: '$198k' },
+      { label: 'HawkMode', value: '$191k' },
+    ],
   },
 ];
+
+function toCompactCurrency(value: number): string {
+  if (!Number.isFinite(value)) return '$0';
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
+  return `$${Math.round(value)}`;
+}
 
 function toSearchCard(group: GroupSummary, index: number): SquadCard {
   return {
     id: group.id_gruppo,
     badge: `Result #${index + 1}`,
     name: group.nome,
-    description: group.descrizione?.trim() || 'No description available for this group yet.',
     privacy: group.privacy,
     cta: group.is_member ? 'Open Workspace' : 'View Group',
+    topFour: [],
   };
 }
 
@@ -62,6 +85,7 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
   const query = searchTerm.trim();
   const queryActive = query.length > 0;
   const cardsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [rankingPreviewByGroup, setRankingPreviewByGroup] = useState<Record<number, Array<{ label: string; value: string }>>>({});
 
   const cards = useMemo(() => {
     if (!queryActive) {
@@ -74,6 +98,49 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
   useEffect(() => {
     gsap.registerPlugin(ScrollTrigger);
   }, []);
+
+  useEffect(() => {
+    const groupIds = cards
+      .map((card) => card.id)
+      .filter((id): id is number => Number.isFinite(id));
+
+    if (groupIds.length === 0) {
+      setRankingPreviewByGroup({});
+      return;
+    }
+
+    let active = true;
+
+    void (async () => {
+      const results = await Promise.allSettled(
+        groupIds.map(async (id) => {
+          const res = await getGroupRanking(id);
+          return {
+            id,
+            rows: res.ranking.slice(0, 4).map((row) => ({
+              label: row.username,
+              value: toCompactCurrency(Number(row.valore_totale)),
+            })),
+          };
+        }),
+      );
+
+      if (!active) return;
+
+      const next: Record<number, Array<{ label: string; value: string }>> = {};
+      for (const row of results) {
+        if (row.status === 'fulfilled') {
+          next[row.value.id] = row.value.rows;
+        }
+      }
+
+      setRankingPreviewByGroup(next);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [cards]);
 
   useEffect(() => {
     const container = cardsContainerRef.current;
@@ -158,9 +225,23 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
                   </span>
                 </div>
 
-                <p className="line-clamp-3 text-sm text-canvas/65 transition-colors duration-300 group-hover:text-canvas/80">
-                  {card.description}
-                </p>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-canvas/45">Top 4 Ranking</p>
+                  <div className="space-y-1.5">
+                    {(card.id ? (rankingPreviewByGroup[card.id] ?? []) : card.topFour).slice(0, 4).map((row, rowIndex) => (
+                      <div key={`${row.label}-${rowIndex}`} className="flex items-center justify-between text-sm text-canvas/80">
+                        <span className="inline-flex items-center gap-2 truncate">
+                          <span className="text-[10px] font-black text-canvas/45">{String(rowIndex + 1).padStart(2, '0')}</span>
+                          <span className="truncate">{row.label}</span>
+                        </span>
+                        <span className="text-xs font-bold text-emerald-300">{row.value}</span>
+                      </div>
+                    ))}
+                    {card.id && !(rankingPreviewByGroup[card.id]?.length) ? (
+                      <p className="text-xs text-canvas/45">Ranking preview unavailable.</p>
+                    ) : null}
+                  </div>
+                </div>
 
                 <div className="mt-auto flex items-center justify-between border-t border-canvas/10 pt-4">
                   <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-canvas/45">Snippet {String(index + 1).padStart(2, '0')}</span>

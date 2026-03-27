@@ -68,14 +68,14 @@ export interface StockPageContext {
 
 export async function loadStockDetailBootstrap(context?: StockPageContext): Promise<StockDetailBootstrap> {
   if (context?.scope === 'group' && !Number.isFinite(context.groupId)) {
-    throw new Error('Contesto gruppo non valido. Apri il titolo nuovamente dalla sezione gruppo.');
+    throw new Error('Invalid group context. Reopen this stock from the group section.');
   }
 
   if (context?.scope === 'group' && Number.isFinite(context.groupId)) {
     const groupData = await getGroupWorkspace(context.groupId as number);
 
     if (Number.isFinite(context.portfolioId) && context.portfolioId !== groupData.portfolio.id_portafoglio) {
-      throw new Error('Il portfolio selezionato non corrisponde al gruppo di origine. Riapri il titolo dal workspace corretto.');
+      throw new Error('Selected portfolio does not match the source group. Reopen this stock from the correct workspace.');
     }
 
     return {
@@ -90,7 +90,7 @@ export async function loadStockDetailBootstrap(context?: StockPageContext): Prom
   const portfolioId = privateBalance.portfolio.id_portafoglio;
 
   if (Number.isFinite(context?.portfolioId) && context?.portfolioId !== portfolioId) {
-    throw new Error('Il portfolio selezionato non corrisponde all area personale. Riapri il titolo dal workspace personale.');
+    throw new Error('Selected portfolio does not match the personal area. Reopen this stock from the personal workspace.');
   }
 
   const [holdingsRes, watchlistRes] = await Promise.all([

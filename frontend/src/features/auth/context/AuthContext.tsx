@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
+  AUTH_TOKEN_EVENT,
   getAccessToken,
   hydrateAccessTokenFromSession,
   login as loginApi,
@@ -50,6 +51,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void bootstrapAuth();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    function syncProfileFromToken(token: string | null) {
+      if (!token) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      void me()
+        .then((profile) => setUser(profile))
+        .catch(() => {
+          setAccessToken(null);
+          setUser(null);
+        })
+        .finally(() => setLoading(false));
+    }
+
+    const onTokenUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<string | null>;
+      syncProfileFromToken(customEvent.detail ?? null);
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== 'access_token') return;
+      syncProfileFromToken(event.newValue);
+    };
+
+    window.addEventListener(AUTH_TOKEN_EVENT, onTokenUpdate as EventListener);
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      window.removeEventListener(AUTH_TOKEN_EVENT, onTokenUpdate as EventListener);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
@@ -65,11 +105,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(response.user);
     },
     logout: async () => {
+      // Clear local auth state first to prevent stale authenticated UI on refresh/race conditions.
+      setAccessToken(null);
+      setUser(null);
       try {
         await logoutApi();
-      } finally {
-        setAccessToken(null);
-        setUser(null);
+      } catch {
+        // Best effort server logout; local state is already cleared.
       }
     },
     refreshProfile: async () => {
@@ -84,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth deve essere usato dentro AuthProvider');
+    throw new Error('useAuth must be used within AuthProvider');
   }
   return context;
 }

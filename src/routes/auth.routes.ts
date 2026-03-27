@@ -5,6 +5,7 @@ import {
 	changeMyPassword,
 	changeMyPhoto,
 	changeMyUsername,
+	deleteUserAccount,
 	login,
 	logout,
 	me,
@@ -23,5 +24,6 @@ authRouter.put('/me/password', authenticate, changeMyPassword);
 authRouter.put('/me/username', authenticate, changeMyUsername);
 authRouter.put('/me/photo', authenticate, changeMyPhoto);
 authRouter.put('/me/email', authenticate, changeMyEmail);
+authRouter.delete('/users/:id_persona', authenticate, deleteUserAccount);
 
 export default authRouter;

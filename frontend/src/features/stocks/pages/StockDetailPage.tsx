@@ -137,7 +137,7 @@ export function StockDetailPage() {
         }
       } catch (err) {
         if (!active) return;
-        const message = err instanceof Error ? err.message : 'Impossibile caricare i dettagli del titolo.';
+        const message = err instanceof Error ? err.message : 'Unable to load stock details.';
         setToast({ message, tone: 'error' });
       } finally {
         if (active) setLoading(false);
@@ -268,14 +268,14 @@ export function StockDetailPage() {
       if (watchlisted) {
         await removeFromWatchlist(stockSymbol);
         setWatchlisted(false);
-        setToast({ message: 'Titolo rimosso dalla watchlist.', tone: 'success' });
+        setToast({ message: 'Stock removed from watchlist.', tone: 'success' });
       } else {
         await addToWatchlist(stockSymbol);
         setWatchlisted(true);
-        setToast({ message: 'Titolo aggiunto alla watchlist.', tone: 'success' });
+        setToast({ message: 'Stock added to watchlist.', tone: 'success' });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Operazione watchlist non riuscita.';
+      const message = err instanceof Error ? err.message : 'Watchlist operation failed.';
       setToast({ message, tone: 'error' });
     }
   }
@@ -311,10 +311,10 @@ export function StockDetailPage() {
       });
 
       setPendingTradeConfirm(null);
-      setToast({ message: 'Ordine di acquisto inviato con successo.', tone: 'success' });
+      setToast({ message: 'Buy order submitted successfully.', tone: 'success' });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di acquisto.';
+      const message = err instanceof Error ? err.message : 'Unable to submit buy order.';
       setToast({ message, tone: 'error' });
     } finally {
       setSubmitting(false);
@@ -353,10 +353,10 @@ export function StockDetailPage() {
       });
 
       setPendingTradeConfirm(null);
-      setToast({ message: 'Ordine di vendita inviato con successo.', tone: 'success' });
+      setToast({ message: 'Sell order submitted successfully.', tone: 'success' });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Impossibile inviare l\'ordine di vendita.';
+      const message = err instanceof Error ? err.message : 'Unable to submit sell order.';
       setToast({ message, tone: 'error' });
     } finally {
       setSubmitting(false);
@@ -370,7 +370,7 @@ export function StockDetailPage() {
   if (loading) {
     return (
       <section ref={stockContainerRef} className="mx-auto max-w-[1440px] px-6 py-10 text-slate-300">
-        Caricamento dettaglio titolo...
+        Loading stock details...
       </section>
     );
   }
@@ -380,14 +380,14 @@ export function StockDetailPage() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <button
           onClick={() => navigate(-1)}
-          aria-label="Torna indietro"
+          aria-label="Go back"
           className="stock-glow-ignore inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
         >
           <span className="material-symbols-outlined text-2xl">arrow_back</span>
         </button>
 
         <Highlight trigger={cash} duration={550} className="group stock-glow-card rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-500/15 via-[#1a1126] to-transparent px-5 py-3 shadow-[0_0_28px_rgba(139,92,246,0.16)]">
-          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/80">Budget disponibile</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-violet-300/80">Available budget</p>
           <div className="text-2xl font-black text-white transition-colors duration-300 group-data-[highlight=on]:text-violet-200 md:text-3xl">
             <Counter
               value={cash}
@@ -619,7 +619,7 @@ export function StockDetailPage() {
                   disabled={submitting}
                   className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
                 >
-                  {submitting ? 'Conferma in corso...' : pendingTradeConfirm === 'buy' ? 'Conferma Buy' : 'Conferma Sell'}
+                  {submitting ? 'Confirming...' : pendingTradeConfirm === 'buy' ? 'Confirm Buy' : 'Confirm Sell'}
                 </button>
                 <button
                   onClick={() => setPendingTradeConfirm(null)}

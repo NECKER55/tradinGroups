@@ -1,78 +1,71 @@
-# Checklist Rotte API (basato su SPECIFICHE.md)
+# API Routes Checklist (based on SPECIFICHE.md)
 
-Legenda: la `x` indica che la funzionalità è presente nel codice.
+Legend: `[x]` means the functionality is implemented in code.
 
 ## Auth
-- [x] Registrazione
+- [x] Register
 - [x] Login
 - [x] Refresh token
 - [x] Logout
-- [x] Dati utente (me)
+- [x] Current user profile (`/auth/me`)
 
-## Users / Profilo
-- [x] Modifica username
-- [x] Modifica email
-- [x] Modifica photo_url
-- [x] Cambio password
+## Users / Profile
+- [x] Update username
+- [x] Update email
+- [x] Update `photo_url`
+- [x] Change password
 
-## Amicizie (Friends)
-- [x] Lista amici e richieste in sospeso
-- [x] Invia richiesta
-- [x] Annulla richiesta
-- [x] Accetta richiesta
-- [x] Rifiuta richiesta
-- [x] Blocca utente
-- [x] Sblocca utente
+## Friendships
+- [x] List friends and pending requests
+- [x] Send friend request
+- [x] Cancel sent request
+- [x] Accept request
+- [x] Reject request
+- [x] Block user
+- [x] Unblock user
 
-## Gruppi (Groups)
-- [x] Elenco gruppi in cui si fa parte
-- [x] Elenco membri del gruppo con ruolo
-- [x] Info del gruppo (nome, foto)
-- [x] Crea gruppo
-- [x] Invia invito (Admin/Owner)
-- [x] Inviti ricevuti
-- [x] Accetta invito
-- [x] Rifiuta invito
-- [x] Annulla invito
-- [x] Cambia ruolo membro (Owner only)
-- [x] Espelli
-- [x] Abbandona
-- [x] Modifica nome gruppo (owner)
-- [x] Modifica privacy gruppo (owner)
-- [ ] Modifica foto profilo gruppo (owner)
-- [x] Modifica descrizione gruppo (owner)  (non esiste nello schema prisma)
-- [x] Elimina gruppo
-- [x] Modifica fondi membro (Admin/Owner)
-- [x] Classifica gruppo
+## Groups
+- [x] List my groups
+- [x] List group members with role
+- [x] Group profile info (name, photo, privacy, description)
+- [x] Create group
+- [x] Send invite (Admin/Owner)
+- [x] Pending invites received
+- [x] Accept invite
+- [x] Reject invite
+- [x] Cancel sent invite
+- [x] Change member role (Owner only)
+- [x] Remove member
+- [x] Leave group
+- [x] Update group name (owner/admin per policy)
+- [x] Update group privacy (owner/admin per policy)
+- [x] Update group photo
+- [x] Update group description
+- [x] Delete group
+- [x] Update member budget (Admin/Owner)
+- [x] Group ranking
 
-## Trading / Ordini / Portafogli
-- [x] Saldo portafoglio privato (GET)
-- [x] Modifica saldo portafoglio privato (PUT)
-- [x] Crea ordine Buy/Sell (POST)
-- [x] Annulla ordine Pending (DELETE)
-- [x] Transazioni (pending)
-- [x] Transazioni eseguite profilo (history)
-- [x] Worker / Cron motore trading
-- [x] Azioni possedute di un portafoglio (holdings)
-- [x] Storico saldo per ogni portafoglio
+## Trading / Orders / Portfolios
+- [x] Private portfolio balance (GET)
+- [x] Update private portfolio balance (PUT)
+- [x] Create Buy/Sell order (POST)
+- [x] Cancel pending order (DELETE)
+- [x] Profile transaction history
+- [x] Holdings by portfolio
+- [x] Portfolio balance history
 
 ## Watchlist
-- [x] Lista ticker salvati
-- [x] Aggiungi ticker
-- [x] Rimuovi ticker
+- [x] List saved tickers
+- [x] Add ticker
+- [x] Remove ticker
 
-## Ricerca
-- [x] Ricerca titoli (ticker/nome società)
-- [x] Ricerca utenti
-- [x] Ricerca gruppi
-
+## Search
+- [x] Search stocks (ticker/company prefix)
+- [x] Search users
+- [x] Search groups
 
 ---
 
-Note rapide:
-- Router presenti: `auth`, `trading` (vedi [src/routes/index.ts](src/routes/index.ts#L1-L20)).
-- Controller principali presenti: `auth.controller.ts`, `privateBalance.controller.ts`, `tradingOrders.controller.ts` (vedi [src/controllers]).
-
-Passi consigliati: implementare gradualmente `users`, `friends`, `groups`, `watchlist` e le API di ricerca.
-
-Se vuoi, posso creare branch/PR con stub per i router mancanti e gli schemi iniziali delle funzionalità.
+Quick notes:
+- Registered routers: `auth`, `groups`, `trading` (see `src/routes/index.ts`).
+- Main controllers in use include auth, groups, friendships, private balance, and trading orders.

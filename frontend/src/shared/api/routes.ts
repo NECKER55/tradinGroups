@@ -10,6 +10,7 @@ export const ROUTES = {
     CHANGE_USERNAME: '/auth/me/username',
     CHANGE_PHOTO: '/auth/me/photo',
     CHANGE_EMAIL: '/auth/me/email',
+    DELETE_USER: (userId: number) => `/auth/users/${userId}`,
   },
   TRADING: {
     PRIVATE_BALANCE: '/trading/private/balance',

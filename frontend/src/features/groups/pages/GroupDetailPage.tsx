@@ -83,6 +83,7 @@ export function GroupDetailPage() {
   const [workspaceTransactions, setWorkspaceTransactions] = useState<GroupWorkspaceTransaction[]>([]);
   const [workspaceWatchlist, setWorkspaceWatchlist] = useState<GroupWorkspaceWatchlistItem[]>([]);
   const [groupRole, setGroupRole] = useState<GroupMember['ruolo'] | null>(null);
+  const [canAccessWorkspace, setCanAccessWorkspace] = useState(false);
   const [groupPortfolioId, setGroupPortfolioId] = useState<number | null>(null);
   const [cash, setCash] = useState(0);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
@@ -136,34 +137,60 @@ export function GroupDetailPage() {
   }
 
   async function refreshAll(groupNumericId: number) {
-    const [profile, rankingRes, workspace, membersRes] = await Promise.all([
+    const [profile, rankingRes, membersRes] = await Promise.all([
       getGroupProfile(groupNumericId),
       getGroupRanking(groupNumericId),
-      getGroupWorkspace(groupNumericId),
       getGroupMembers(groupNumericId),
     ]);
-    const pricesRes = await getStocksCurrentPrices(workspace.holdings.map((h) => h.id_stock));
 
     setGroup(profile.group);
     setRanking(rankingRes.ranking);
-    setWorkspaceHoldings(workspace.holdings);
-    setWorkspaceHistory(workspace.history);
-    setWorkspaceTransactions(workspace.transactions);
-    setWorkspaceWatchlist(workspace.watchlist);
-    setCurrentPrices(pricesToMap(pricesRes.prices));
-    setGroupPortfolioId(workspace.portfolio.id_portafoglio);
-    setCash(toNumber(workspace.portfolio.liquidita));
     setMembers(membersRes.members);
 
     setEditName(profile.group.nome);
     setEditDescription(profile.group.descrizione ?? '');
     setEditPhotoUrl(profile.group.photo_url ?? '');
+
+    if (!user?.id_persona) {
+      setCanAccessWorkspace(false);
+      setWorkspaceHoldings([]);
+      setWorkspaceHistory([]);
+      setWorkspaceTransactions([]);
+      setWorkspaceWatchlist([]);
+      setCurrentPrices({});
+      setGroupPortfolioId(null);
+      setCash(0);
+      return;
+    }
+
+    try {
+      const workspace = await getGroupWorkspace(groupNumericId);
+      const pricesRes = await getStocksCurrentPrices(workspace.holdings.map((h) => h.id_stock));
+
+      setWorkspaceHoldings(workspace.holdings);
+      setWorkspaceHistory(workspace.history);
+      setWorkspaceTransactions(workspace.transactions);
+      setWorkspaceWatchlist(workspace.watchlist);
+      setCurrentPrices(pricesToMap(pricesRes.prices));
+      setGroupPortfolioId(workspace.portfolio.id_portafoglio);
+      setCash(toNumber(workspace.portfolio.liquidita));
+      setCanAccessWorkspace(true);
+    } catch {
+      setCanAccessWorkspace(false);
+      setWorkspaceHoldings([]);
+      setWorkspaceHistory([]);
+      setWorkspaceTransactions([]);
+      setWorkspaceWatchlist([]);
+      setCurrentPrices({});
+      setGroupPortfolioId(null);
+      setCash(0);
+    }
   }
 
   useEffect(() => {
     if (!Number.isFinite(parsedGroupId)) {
       setLoading(false);
-      setError('ID gruppo non valido.');
+      setError('Invalid group ID.');
       return;
     }
 
@@ -177,7 +204,7 @@ export function GroupDetailPage() {
         await refreshAll(parsedGroupId);
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : 'Impossibile caricare il gruppo.');
+        setError(err instanceof Error ? err.message : 'Unable to load group.');
       } finally {
         if (active) setLoading(false);
       }
@@ -188,7 +215,7 @@ export function GroupDetailPage() {
     return () => {
       active = false;
     };
-  }, [parsedGroupId]);
+  }, [parsedGroupId, user?.id_persona]);
 
   useEffect(() => {
     const ownRole = members.find((m) => m.id_persona === user?.id_persona)?.ruolo ?? null;
@@ -264,7 +291,7 @@ export function GroupDetailPage() {
         setSearchError(null);
       } catch (err) {
         if (!active) return;
-        setSearchError(err instanceof Error ? err.message : 'Errore ricerca titoli.');
+        setSearchError(err instanceof Error ? err.message : 'Stock search failed.');
         setSearchResults([]);
       } finally {
         if (active) setSearchLoading(false);
@@ -284,7 +311,7 @@ export function GroupDetailPage() {
   }, [banner]);
 
   useEffect(() => {
-    if (!Number.isFinite(parsedGroupId) || loading || error) return;
+    if (!Number.isFinite(parsedGroupId) || loading || error || !canAccessWorkspace) return;
 
     let active = true;
 
@@ -311,7 +338,7 @@ export function GroupDetailPage() {
     return () => {
       active = false;
     };
-  }, [activeTab, error, loading, parsedGroupId]);
+  }, [activeTab, canAccessWorkspace, error, loading, parsedGroupId]);
 
   useEffect(() => {
     const root = groupContainerRef.current;
@@ -462,14 +489,14 @@ export function GroupDetailPage() {
 
     const amount = Number(memberBudgetAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setBanner('Inserisci un importo valido maggiore di 0.');
+      setBanner('Enter a valid amount greater than 0.');
       return;
     }
 
     const targetIds = applyToAllMembers ? members.map((m) => m.id_persona) : selectedMemberIds;
 
     if (targetIds.length === 0) {
-      setBanner('Seleziona almeno un membro o attiva Apply to all.');
+      setBanner('Select at least one member or enable Apply to all.');
       return;
     }
 
@@ -485,7 +512,7 @@ export function GroupDetailPage() {
     if (field === 'name') {
       const next = editName.trim();
       if (next.length < 3) {
-        setBanner('Il nome gruppo deve avere almeno 3 caratteri.');
+        setBanner('Group name must be at least 3 characters long.');
         return;
       }
       setPendingAction({ kind: 'updateGroup', field, value: next });
@@ -504,12 +531,12 @@ export function GroupDetailPage() {
     if (!Number.isFinite(parsedGroupId)) return;
 
     if (memberIdsSet.has(person.id_persona)) {
-      setBanner('Utente gia membro del gruppo.');
+      setBanner('User is already a member of this group.');
       return;
     }
 
     if (sentInviteIds.includes(person.id_persona)) {
-      setBanner('Invito gia inviato a questo utente.');
+      setBanner('Invite already sent to this user.');
       return;
     }
 
@@ -521,7 +548,7 @@ export function GroupDetailPage() {
       setBanner(res.message);
       setSentInviteIds((prev) => [...new Set([...prev, person.id_persona])]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invio invito non riuscito.';
+      const message = err instanceof Error ? err.message : 'Unable to send invite.';
       setBanner(message);
     } finally {
       setInviteSendingId(null);
@@ -539,7 +566,7 @@ export function GroupDetailPage() {
       setBanner(res.message);
       setSentInviteIds((prev) => prev.filter((id) => id !== person.id_persona));
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : 'Annullamento invito non riuscito.');
+      setBanner(err instanceof Error ? err.message : 'Unable to cancel invite.');
     } finally {
       setInviteCancellingId(null);
     }
@@ -574,8 +601,8 @@ export function GroupDetailPage() {
         const failed = results.filter((r) => r.status === 'rejected').length;
         const success = results.length - failed;
         setBanner(failed > 0
-          ? `Operazione completata parzialmente: ${success} successi, ${failed} falliti.`
-          : `Operazione eseguita su ${success} membri.`);
+          ? `Operation partially completed: ${success} succeeded, ${failed} failed.`
+          : `Operation executed for ${success} members.`);
       } else if (pendingAction.kind === 'updateGroup') {
         if (pendingAction.field === 'name') {
           const res = await updateGroupName(parsedGroupId, pendingAction.value ?? '');
@@ -590,7 +617,7 @@ export function GroupDetailPage() {
       } else {
         if (isOwner && members.length > 1) {
           if (!pendingAction.newOwnerId || pendingAction.newOwnerId === user?.id_persona) {
-            setBanner('Se sei owner devi selezionare un nuovo owner valido prima di uscire.');
+            setBanner('As owner, you must select a valid new owner before leaving.');
             setActionLoading(false);
             return;
           }
@@ -612,7 +639,7 @@ export function GroupDetailPage() {
       await refreshAll(parsedGroupId);
       setPendingAction(null);
     } catch (err) {
-      setBanner(err instanceof Error ? err.message : 'Operazione non riuscita.');
+      setBanner(err instanceof Error ? err.message : 'Operation failed.');
     } finally {
       setActionLoading(false);
     }
@@ -643,7 +670,7 @@ export function GroupDetailPage() {
         <div className="flex items-center justify-between gap-4">
           <button
             onClick={() => navigate(-1)}
-            aria-label="Torna indietro"
+            aria-label="Go back"
             className="group-glow-ignore inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
           >
             <span className="material-symbols-outlined text-2xl">arrow_back</span>
@@ -662,41 +689,45 @@ export function GroupDetailPage() {
             </div>
           </div>
 
-          <button
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Apri impostazioni gruppo"
-            className="group-glow-card inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-500/35 bg-violet-500/12 text-violet-200 transition-colors hover:bg-violet-500/20"
-          >
-            <span className="material-symbols-outlined">settings</span>
-          </button>
+          {canAccessWorkspace ? (
+            <button
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open group settings"
+              className="group-glow-card inline-flex h-11 w-11 items-center justify-center rounded-full border border-violet-500/35 bg-violet-500/12 text-violet-200 transition-colors hover:bg-violet-500/20"
+            >
+              <span className="material-symbols-outlined">settings</span>
+            </button>
+          ) : <div className="w-11" />}
         </div>
 
-        {loading ? <p className="text-sm text-slate-400">Caricamento dati gruppo...</p> : null}
+        {loading ? <p className="text-sm text-slate-400">Loading group data...</p> : null}
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
 
         {!loading && !error ? (
           <>
             <section className="space-y-5">
               <h2 className="text-2xl font-black uppercase tracking-tight text-violet-200">Group Leaderboard</h2>
-              <div className="overflow-hidden rounded-2xl border border-[#232337] bg-[#10111a]">
+              <div className="relative overflow-hidden rounded-2xl bg-transparent">
+                <div className="pointer-events-none absolute -left-14 -top-16 h-36 w-36 rounded-full bg-violet-500/18 blur-3xl" />
+                <div className="pointer-events-none absolute -right-12 bottom-0 h-32 w-32 rounded-full bg-fuchsia-500/16 blur-3xl" />
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-left text-sm">
+                  <table className="w-full min-w-[760px] text-left text-sm backdrop-blur-[1.5px]">
                     <thead>
-                      <tr className="border-b border-[#25263a] bg-[#17182a] text-xs uppercase tracking-[0.18em] text-violet-300/80">
+                      <tr className="border-b border-violet-500/20 bg-violet-500/[0.06] text-xs uppercase tracking-[0.18em] text-violet-200/90">
                         <th className="px-6 py-4">Rank</th>
                         <th className="px-6 py-4">Member</th>
                         <th className="px-6 py-4">Role</th>
                         <th className="px-6 py-4 text-right">Portfolio Value</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#202131]">
+                    <tbody className="divide-y divide-violet-500/10">
                       {ranking.length === 0 ? (
                         <tr>
-                          <td className="px-6 py-6 text-slate-400" colSpan={4}>Nessun membro disponibile.</td>
+                          <td className="px-6 py-6 text-slate-400" colSpan={4}>No members available.</td>
                         </tr>
                       ) : (
                         ranking.map((member) => (
-                          <tr key={member.id_persona} className="bg-[#0f1018] transition-colors hover:bg-[#161829]">
+                          <tr key={member.id_persona} className="bg-white/[0.02] transition-colors hover:bg-violet-500/[0.07]">
                             <td className="px-6 py-4">
                               <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-violet-400/30 bg-violet-500/12 text-xs font-black text-violet-200">
                                 {String(member.posizione).padStart(2, '0')}
@@ -719,6 +750,7 @@ export function GroupDetailPage() {
               </div>
             </section>
 
+            {canAccessWorkspace ? (
             <div className="rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
               <div className="relative">
                 <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">search</span>
@@ -731,13 +763,13 @@ export function GroupDetailPage() {
                 />
               </div>
 
-              {searchLoading ? <p className="mt-3 text-xs text-slate-400">Ricerca in corso...</p> : null}
+              {searchLoading ? <p className="mt-3 text-xs text-slate-400">Searching...</p> : null}
               {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
 
               {searchTerm.trim() && !searchLoading && !searchError ? (
                 <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
                   {searchResults.length === 0 ? (
-                    <p className="text-xs text-slate-400">Nessun titolo trovato.</p>
+                    <p className="text-xs text-slate-400">No stocks found.</p>
                   ) : (
                     searchResults.map((stock) => (
                       <div
@@ -758,7 +790,13 @@ export function GroupDetailPage() {
                 </div>
               ) : null}
             </div>
+            ) : (
+              <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] px-4 py-3 text-sm text-violet-100/90">
+                This is a public view of the group. Portfolio, assets, and operations are visible only to authenticated members of the group.
+              </div>
+            )}
 
+            {canAccessWorkspace ? (
             <section id="group-workspace" className="space-y-8">
               <div className="flex items-center gap-4">
                 <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
@@ -835,7 +873,7 @@ export function GroupDetailPage() {
                     items={workspaceHoldings}
                     currentPrices={currentPrices}
                     onSelect={(idStock) => navigate(buildGroupStockHref(idStock))}
-                    emptyLabel="Nessuna azione in possesso nel portafoglio gruppo."
+                    emptyLabel="No holdings in the group portfolio."
                   />
                 ) : null}
 
@@ -920,7 +958,7 @@ export function GroupDetailPage() {
                         <tbody className="divide-y divide-[#1f1f2e] bg-[#0f0f14]">
                           {filteredWorkspaceTransactions.length === 0 ? (
                             <tr>
-                              <td className="px-4 py-4 text-slate-400" colSpan={6}>Nessuna transazione disponibile con i filtri selezionati.</td>
+                              <td className="px-4 py-4 text-slate-400" colSpan={6}>No transactions available with the selected filters.</td>
                             </tr>
                           ) : (
                             filteredWorkspaceTransactions.map((tx) => (
@@ -974,6 +1012,7 @@ export function GroupDetailPage() {
                 ) : null}
               </div>
             </section>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -998,12 +1037,12 @@ export function GroupDetailPage() {
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-violet-300/85">Group Settings</p>
-                  <p className="text-sm text-slate-400">Pannello gestione clan con permessi per ruolo.</p>
+                  <p className="text-sm text-slate-400">Clan management panel with role-based permissions.</p>
                 </div>
                 <button
                   onClick={() => setSettingsOpen(false)}
                   className="grid h-8 w-8 place-items-center rounded-full border border-violet-500/30 bg-violet-500/12 text-violet-200 hover:bg-violet-500/20"
-                  aria-label="Chiudi impostazioni"
+                  aria-label="Close settings"
                 >
                   <span className="material-symbols-outlined text-[18px]">close</span>
                 </button>
@@ -1019,7 +1058,7 @@ export function GroupDetailPage() {
                       </div>
                       <div>
                         <p className="text-lg font-black text-slate-100">{group?.nome}</p>
-                        <p className="text-xs text-slate-400">{group?.descrizione || 'Nessuna descrizione gruppo.'}</p>
+                        <p className="text-xs text-slate-400">{group?.descrizione || 'No group description available.'}</p>
                       </div>
                     </div>
                   </div>
@@ -1097,7 +1136,7 @@ export function GroupDetailPage() {
                         className="w-full rounded-lg border border-[#2a2c44] bg-[#171a2a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-violet-500"
                         placeholder="Search user by username or id"
                       />
-                      {inviteLoading ? <p className="mt-2 text-xs text-slate-400">Ricerca...</p> : null}
+                      {inviteLoading ? <p className="mt-2 text-xs text-slate-400">Searching...</p> : null}
                       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
                         {inviteResults.map((person) => {
                           const alreadyMember = memberIdsSet.has(person.id_persona);
@@ -1270,7 +1309,7 @@ export function GroupDetailPage() {
               <button
                 onClick={() => setBanner(null)}
                 className="grid h-6 w-6 place-items-center rounded-full border border-violet-400/30 bg-violet-500/10 text-violet-200"
-                aria-label="Chiudi notifica"
+                aria-label="Close notification"
               >
                 <span className="material-symbols-outlined text-[14px]">close</span>
               </button>
@@ -1297,10 +1336,10 @@ export function GroupDetailPage() {
 
               {pendingAction.kind === 'leave' ? (
                 <>
-                  <p className="mt-3 text-sm text-slate-200">Confermi di voler lasciare il gruppo?</p>
+                  <p className="mt-3 text-sm text-slate-200">Do you confirm you want to leave this group?</p>
                   {isOwner && members.length > 1 ? (
                     <div className="mt-3 rounded-xl border border-[#2a2c44] bg-[#141728] p-3">
-                      <p className="text-xs text-slate-300">Sei owner: seleziona il nuovo owner.</p>
+                      <p className="text-xs text-slate-300">You are the owner: select the new owner first.</p>
                       <select
                         value={pendingAction.newOwnerId ?? ''}
                         onChange={(e) => setPendingAction({ kind: 'leave', newOwnerId: Number(e.target.value) || null })}
@@ -1316,18 +1355,18 @@ export function GroupDetailPage() {
                 </>
               ) : null}
 
-              {pendingAction.kind === 'expel' ? <p className="mt-3 text-sm text-slate-200">Confermi espulsione di {pendingAction.member.username}?</p> : null}
-              {pendingAction.kind === 'promote' ? <p className="mt-3 text-sm text-slate-200">Confermi promozione di {pendingAction.member.username}?</p> : null}
-              {pendingAction.kind === 'demote' ? <p className="mt-3 text-sm text-slate-200">Confermi retrocessione di {pendingAction.member.username}?</p> : null}
+              {pendingAction.kind === 'expel' ? <p className="mt-3 text-sm text-slate-200">Do you confirm removal of {pendingAction.member.username}?</p> : null}
+              {pendingAction.kind === 'promote' ? <p className="mt-3 text-sm text-slate-200">Do you confirm promotion of {pendingAction.member.username}?</p> : null}
+              {pendingAction.kind === 'demote' ? <p className="mt-3 text-sm text-slate-200">Do you confirm demotion of {pendingAction.member.username}?</p> : null}
               {pendingAction.kind === 'bulkBudget' ? (
                 <p className="mt-3 text-sm text-slate-200">
-                  Confermi {pendingAction.budgetAction === 'deposit' ? 'deposito' : 'prelievo'} di {toCurrency(pendingAction.amount)}
-                  {' '}su {pendingAction.targetIds.length} membri?
+                  Do you confirm a {pendingAction.budgetAction === 'deposit' ? 'deposit' : 'withdrawal'} of {toCurrency(pendingAction.amount)}
+                  {' '}for {pendingAction.targetIds.length} members?
                 </p>
               ) : null}
               {pendingAction.kind === 'updateGroup' ? (
                 <p className="mt-3 text-sm text-slate-200">
-                  Confermi modifica {pendingAction.field === 'name' ? 'nome' : pendingAction.field === 'description' ? 'descrizione' : 'foto gruppo'}?
+                  Do you confirm updating {pendingAction.field === 'name' ? 'name' : pendingAction.field === 'description' ? 'description' : 'group photo'}?
                 </p>
               ) : null}
 
@@ -1337,14 +1376,14 @@ export function GroupDetailPage() {
                   disabled={actionLoading}
                   className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-violet-600 disabled:opacity-60"
                 >
-                  {actionLoading ? 'Conferma...' : 'Conferma'}
+                  {actionLoading ? 'Confirming...' : 'Confirm'}
                 </button>
                 <button
                   onClick={() => setPendingAction(null)}
                   disabled={actionLoading}
                   className="rounded-lg border border-[#2a2a39] bg-[#161824] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-colors hover:bg-[#1e2030] disabled:opacity-60"
                 >
-                  Annulla
+                  Cancel
                 </button>
               </div>
             </motion.div>

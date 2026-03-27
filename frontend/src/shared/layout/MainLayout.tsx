@@ -75,7 +75,7 @@ export function MainLayout() {
               <h2 className="text-lg font-black uppercase tracking-tighter text-canvas">TradingArena</h2>
             </div>
             <p className="text-sm leading-relaxed text-canvas/60">
-              Competitive trading simulator per imparare, competere e crescere senza rischio reale.
+              Competitive trading simulator to learn, compete, and grow without real-world risk.
             </p>
           </div>
 

@@ -8,6 +8,7 @@ import {
   changeMyPassword,
   changeMyPhoto,
   changeMyUsername,
+  deleteUserAccount,
   setAccessToken,
 } from '../../auth/api/authApi';
 import {
@@ -33,6 +34,7 @@ import {
   searchPeople,
   sendFriendRequest,
 } from '../api/socialHubApi';
+import { getGroupRanking } from '../../groups/api/groupDetailApi';
 
 type SearchMode = 'users' | 'groups';
 type FriendRelationState = 'self' | 'friend' | 'incoming' | 'outgoing' | 'none';
@@ -74,6 +76,13 @@ function roleChipColor(role: string): string {
   return 'bg-emerald-500/15 text-emerald-200 border-emerald-400/35';
 }
 
+function toCompactCurrency(value: number): string {
+  if (!Number.isFinite(value)) return '$0';
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
+  return `$${Math.round(value)}`;
+}
+
 function parseBudget(raw: string): number {
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) return 0;
@@ -91,7 +100,7 @@ function toInviteCandidate(friend: FriendshipRow): InviteCandidate {
 }
 
 export function SocialHubPage() {
-  const { user, refreshProfile } = useAuth();
+  const { user, refreshProfile, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -110,6 +119,7 @@ export function SocialHubPage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [peopleResults, setPeopleResults] = useState<PeopleSearchResult[]>([]);
   const [groupResults, setGroupResults] = useState<GroupSummary[]>([]);
+  const [groupRankingPreviewById, setGroupRankingPreviewById] = useState<Record<number, Array<{ username: string; value: string }>>>({});
 
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [invitesOpen, setInvitesOpen] = useState(false);
@@ -138,6 +148,12 @@ export function SocialHubPage() {
   const [accountBusyAction, setAccountBusyAction] = useState<'username' | 'email' | 'photo' | 'password' | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [accountSuccess, setAccountSuccess] = useState<string | null>(null);
+  const [showAccountPasswords, setShowAccountPasswords] = useState(false);
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [deleteUsernameInput, setDeleteUsernameInput] = useState('');
+  const [deletePhraseInput, setDeletePhraseInput] = useState('');
+  const [deleteAcknowledge, setDeleteAcknowledge] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [accountForm, setAccountForm] = useState<AccountForm>({
     username: '',
     email: '',
@@ -180,7 +196,7 @@ export function SocialHubPage() {
         await refreshData();
       } catch (err) {
         if (!active) return;
-        setLoadingError(err instanceof Error ? err.message : 'Impossibile caricare la sezione social.');
+        setLoadingError(err instanceof Error ? err.message : 'Unable to load social section.');
       } finally {
         if (active) setLoading(false);
       }
@@ -223,7 +239,7 @@ export function SocialHubPage() {
         setSearchError(null);
       } catch (err) {
         if (!active) return;
-        setSearchError(err instanceof Error ? err.message : 'Ricerca non riuscita.');
+        setSearchError(err instanceof Error ? err.message : 'Search failed.');
         setPeopleResults([]);
         setGroupResults([]);
       } finally {
@@ -236,6 +252,44 @@ export function SocialHubPage() {
       clearTimeout(timer);
     };
   }, [searchMode, searchTerm]);
+
+  useEffect(() => {
+    if (myGroups.length === 0) {
+      setGroupRankingPreviewById({});
+      return;
+    }
+
+    let active = true;
+
+    void (async () => {
+      const results = await Promise.allSettled(
+        myGroups.map(async (group) => {
+          const ranking = await getGroupRanking(group.id_gruppo);
+          return {
+            id: group.id_gruppo,
+            top: ranking.ranking.slice(0, 4).map((row) => ({
+              username: row.username,
+              value: toCompactCurrency(Number(row.valore_totale)),
+            })),
+          };
+        }),
+      );
+
+      if (!active) return;
+
+      const next: Record<number, Array<{ username: string; value: string }>> = {};
+      for (const row of results) {
+        if (row.status === 'fulfilled') {
+          next[row.value.id] = row.value.top;
+        }
+      }
+      setGroupRankingPreviewById(next);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [myGroups]);
 
   useEffect(() => {
     if (!createModalOpen) {
@@ -274,7 +328,7 @@ export function SocialHubPage() {
   }, [createModalOpen, inviteSearchTerm]);
 
   useEffect(() => {
-    if (!blockingTarget && !createModalOpen && !accountModalOpen) return;
+    if (!blockingTarget && !createModalOpen && !accountModalOpen && !deleteConfirmationOpen) return;
 
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -282,7 +336,7 @@ export function SocialHubPage() {
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [blockingTarget, createModalOpen, accountModalOpen]);
+  }, [blockingTarget, createModalOpen, accountModalOpen, deleteConfirmationOpen]);
 
   useEffect(() => {
     if (!banner && !loadingError) return;
@@ -338,6 +392,10 @@ export function SocialHubPage() {
         newPassword: '',
         confirmNewPassword: '',
       });
+      setDeleteUsernameInput('');
+      setDeletePhraseInput('');
+      setDeleteAcknowledge(false);
+      setDeleteConfirmationOpen(false);
       setAccountModalOpen(true);
     }
   }, [location.search, user?.email, user?.photo_url, user?.username]);
@@ -434,6 +492,10 @@ export function SocialHubPage() {
 
   function closeAccountModal() {
     setAccountModalOpen(false);
+    setDeleteConfirmationOpen(false);
+    setDeleteUsernameInput('');
+    setDeletePhraseInput('');
+    setDeleteAcknowledge(false);
     // remove account query param from URL to avoid extra history entries
     try {
       navigate(location.pathname, { replace: true });
@@ -502,7 +564,7 @@ export function SocialHubPage() {
       await action();
       await refreshData();
     } catch (err) {
-      setLoadingError(err instanceof Error ? err.message : 'Operazione non riuscita.');
+      setLoadingError(err instanceof Error ? err.message : 'Operation failed.');
     }
   }
 
@@ -533,7 +595,7 @@ export function SocialHubPage() {
   async function handleCreateGroup() {
     const groupName = createForm.nome.trim();
     if (groupName.length < 3) {
-      setCreateError('Il nome gruppo deve avere almeno 3 caratteri.');
+      setCreateError('Group name must be at least 3 characters long.');
       return;
     }
 
@@ -560,7 +622,7 @@ export function SocialHubPage() {
 
         const failedInvites = inviteResults.filter((result) => result.status === 'rejected').length;
         if (failedInvites > 0) {
-          setBanner(`Gruppo creato, ma ${failedInvites} inviti non sono stati inviati.`);
+          setBanner(`Group created, but ${failedInvites} invites could not be sent.`);
         }
       }
 
@@ -568,7 +630,7 @@ export function SocialHubPage() {
       setCreateModalOpen(false);
       navigate(`/groups/${groupId}`);
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Impossibile creare il gruppo.');
+      setCreateError(err instanceof Error ? err.message : 'Unable to create group.');
     } finally {
       setCreatingGroup(false);
     }
@@ -577,7 +639,7 @@ export function SocialHubPage() {
   async function handleUpdateUsername() {
     const newUsername = accountForm.username.trim();
     if (newUsername.length < 3) {
-      setAccountError('Username troppo corto. Minimo 3 caratteri.');
+      setAccountError('Username is too short. Minimum 3 characters.');
       return;
     }
 
@@ -587,9 +649,9 @@ export function SocialHubPage() {
       const response = await changeMyUsername(newUsername);
       setAccessToken(response.access_token);
       await refreshProfile();
-      setAccountSuccess('Username aggiornato con successo.');
+      setAccountSuccess('Username updated successfully.');
     } catch (err) {
-      setAccountError(err instanceof Error ? err.message : 'Impossibile aggiornare username.');
+      setAccountError(err instanceof Error ? err.message : 'Unable to update username.');
     } finally {
       setAccountBusyAction(null);
     }
@@ -601,9 +663,9 @@ export function SocialHubPage() {
       setAccountError(null);
       await changeMyPhoto(accountForm.photoUrl.trim() || null);
       await refreshProfile();
-      setAccountSuccess('Foto profilo aggiornata con successo.');
+      setAccountSuccess('Profile photo updated successfully.');
     } catch (err) {
-      setAccountError(err instanceof Error ? err.message : 'Impossibile aggiornare la foto.');
+      setAccountError(err instanceof Error ? err.message : 'Unable to update profile photo.');
     } finally {
       setAccountBusyAction(null);
     }
@@ -612,7 +674,7 @@ export function SocialHubPage() {
   async function handleUpdateEmail() {
     const nextEmail = accountForm.email.trim();
     if (!nextEmail) {
-      setAccountError('Inserisci una email valida.');
+      setAccountError('Please enter a valid email.');
       return;
     }
 
@@ -623,7 +685,7 @@ export function SocialHubPage() {
       await refreshProfile();
       setAccountSuccess(response.message);
     } catch (err) {
-      setAccountError(err instanceof Error ? err.message : 'Impossibile aggiornare la email.');
+      setAccountError(err instanceof Error ? err.message : 'Unable to update email.');
     } finally {
       setAccountBusyAction(null);
     }
@@ -631,12 +693,12 @@ export function SocialHubPage() {
 
   async function handleUpdatePassword() {
     if (accountForm.newPassword.length < 8) {
-      setAccountError('La nuova password deve avere almeno 8 caratteri.');
+      setAccountError('New password must be at least 8 characters long.');
       return;
     }
 
     if (accountForm.newPassword !== accountForm.confirmNewPassword) {
-      setAccountError('Le nuove password non coincidono.');
+      setAccountError('New passwords do not match.');
       return;
     }
 
@@ -656,9 +718,47 @@ export function SocialHubPage() {
         confirmNewPassword: '',
       }));
     } catch (err) {
-      setAccountError(err instanceof Error ? err.message : 'Impossibile aggiornare la password.');
+      const message = err instanceof Error ? err.message : 'Unable to update password.';
+      if (/current password is incorrect/i.test(message)) {
+        setAccountError('Current password is incorrect.');
+      } else {
+        setAccountError(message);
+      }
     } finally {
       setAccountBusyAction(null);
+    }
+  }
+
+  const isDeleteUsernameConfirmed = deleteUsernameInput.trim() === (user?.username ?? '');
+  const isDeletePhraseConfirmed = deletePhraseInput.trim() === 'DELETE MY ACCOUNT';
+
+  async function handleDeleteAccount() {
+    if (!user) return;
+
+    if (!isDeleteUsernameConfirmed || !deleteAcknowledge) {
+      setAccountError('Please complete all delete confirmations before continuing.');
+      return;
+    }
+
+    if (!isDeletePhraseConfirmed) {
+      setAccountError('Type DELETE MY ACCOUNT to confirm permanent deletion.');
+      return;
+    }
+
+    try {
+      setDeletingAccount(true);
+      setAccountError(null);
+      const response = await deleteUserAccount(user.id_persona);
+      setBanner(response.message);
+      setDeleteConfirmationOpen(false);
+      closeAccountModal();
+      await logout();
+      setAccessToken(null);
+      navigate('/register', { replace: true });
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : 'Unable to delete account.');
+    } finally {
+      setDeletingAccount(false);
     }
   }
 
@@ -744,7 +844,7 @@ export function SocialHubPage() {
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={() => navigate('/')}
-          aria-label="Torna alla home"
+          aria-label="Back to home"
           className="inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
         >
           <span className="material-symbols-outlined text-2xl">arrow_back</span>
@@ -841,7 +941,7 @@ export function SocialHubPage() {
                     <button
                       onClick={() => setRequestsOpen(false)}
                       className="grid h-6 w-6 place-items-center rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-200 transition-colors hover:bg-violet-500/20"
-                      aria-label="Chiudi richieste"
+                      aria-label="Close requests"
                     >
                       <span className="text-xs font-black leading-none">x</span>
                     </button>
@@ -850,7 +950,7 @@ export function SocialHubPage() {
                     <div className="space-y-2">
                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">Received</p>
                       {incomingRequests.length === 0 ? (
-                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">Nessuna richiesta ricevuta.</p>
+                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">No received requests.</p>
                       ) : (
                         incomingRequests.map((req) => (
                           <div key={`incoming-${req.id_persona}`} className="rounded-xl border border-[#232337] bg-[#13131a] p-3">
@@ -860,7 +960,7 @@ export function SocialHubPage() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-bold text-slate-100">{req.username}</p>
-                                <p className="text-[11px] text-slate-400">Vuole collegarsi con te.</p>
+                                <p className="text-[11px] text-slate-400">Wants to connect with you.</p>
                               </div>
                             </div>
                             <div className="mt-3 flex flex-wrap gap-2">
@@ -894,7 +994,7 @@ export function SocialHubPage() {
                     <div className="space-y-2">
                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-sky-300/90">Sent</p>
                       {outgoingRequests.length === 0 ? (
-                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">Nessuna richiesta inviata pendente.</p>
+                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">No pending sent requests.</p>
                       ) : (
                         outgoingRequests.map((req) => (
                           <div key={`outgoing-${req.id_persona}`} className="rounded-xl border border-[#232337] bg-[#13131a] p-3">
@@ -905,7 +1005,7 @@ export function SocialHubPage() {
                                 </div>
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-bold text-slate-100">{req.username}</p>
-                                  <p className="text-[11px] text-slate-400">In attesa di risposta.</p>
+                                  <p className="text-[11px] text-slate-400">Waiting for response.</p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
@@ -943,7 +1043,7 @@ export function SocialHubPage() {
                     <button
                       onClick={() => setInvitesOpen(false)}
                       className="grid h-6 w-6 place-items-center rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-200 transition-colors hover:bg-violet-500/20"
-                      aria-label="Chiudi inviti"
+                      aria-label="Close invites"
                     >
                       <span className="text-xs font-black leading-none">x</span>
                     </button>
@@ -952,14 +1052,14 @@ export function SocialHubPage() {
                     <div className="space-y-2">
                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">Received</p>
                       {groupInvites.length === 0 ? (
-                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">Nessun invito gruppo pendente.</p>
+                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">No pending group invites.</p>
                       ) : (
                         groupInvites.map((invite) => (
                           <div key={`recv-${invite.id_gruppo}`} className="rounded-xl border border-[#232337] bg-[#13131a] p-3">
                             <div className="flex items-center justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-bold text-slate-100">{invite.gruppo.nome}</p>
-                                <p className="text-[11px] text-slate-400">Invito da {invite.mittente.username}</p>
+                                <p className="text-[11px] text-slate-400">Invite from {invite.mittente.username}</p>
                               </div>
                               <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-violet-200">
                                 {invite.gruppo.privacy}
@@ -989,14 +1089,14 @@ export function SocialHubPage() {
                     <div className="space-y-2">
                       <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-sky-300/90">Sent</p>
                       {sentGroupInvites.length === 0 ? (
-                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">Nessun invito gruppo inviato pendente.</p>
+                        <p className="rounded-xl border border-[#232337] bg-[#13131a] px-3 py-2 text-xs text-slate-400">No pending sent group invites.</p>
                       ) : (
                         sentGroupInvites.map((invite) => (
                           <div key={`sent-${invite.id_gruppo}-${invite.invitato.id_persona}`} className="rounded-xl border border-[#232337] bg-[#13131a] p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-bold text-slate-100">{invite.gruppo.nome}</p>
-                                <p className="text-[11px] text-slate-400">Inviato a {invite.invitato.username}</p>
+                                <p className="text-[11px] text-slate-400">Sent to {invite.invitato.username}</p>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="rounded-full border border-sky-400/35 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-200">Sent</span>
@@ -1020,7 +1120,7 @@ export function SocialHubPage() {
           </div>
         </div>
 
-        {searchLoading ? <p className="mt-3 text-xs text-slate-400">Ricerca in corso...</p> : null}
+        {searchLoading ? <p className="mt-3 text-xs text-slate-400">Searching...</p> : null}
         {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
 
         {searchTerm.trim() ? (
@@ -1028,7 +1128,7 @@ export function SocialHubPage() {
             {searchMode === 'users' ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {peopleResults.length === 0 ? (
-                  <p className="text-sm text-slate-400">Nessun utente trovato.</p>
+                  <p className="text-sm text-slate-400">No users found.</p>
                 ) : (
                   peopleResults.map((person) => {
                     const relation = userRelation(person.id_persona);
@@ -1041,7 +1141,7 @@ export function SocialHubPage() {
                           <div>
                             <p className="text-sm font-bold text-slate-100">{person.username}</p>
                             <p className="text-[11px] text-slate-400">
-                              {relation === 'friend' ? 'Gia tuo amico' : relation === 'outgoing' ? 'Richiesta gia inviata' : relation === 'incoming' ? 'Richiesta ricevuta' : relation === 'self' ? 'Questo sei tu' : 'Non ancora amico'}
+                              {relation === 'friend' ? 'Already your friend' : relation === 'outgoing' ? 'Request already sent' : relation === 'incoming' ? 'Request received' : relation === 'self' ? 'This is you' : 'Not a friend yet'}
                             </p>
                           </div>
                         </div>
@@ -1066,7 +1166,7 @@ export function SocialHubPage() {
             ) : (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {groupResults.length === 0 ? (
-                  <p className="text-sm text-slate-400">Nessun gruppo trovato.</p>
+                  <p className="text-sm text-slate-400">No groups found.</p>
                 ) : (
                   groupResults.map((group) => (
                     <button
@@ -1109,7 +1209,7 @@ export function SocialHubPage() {
                   setLoadingError(null);
                 }}
                 className="grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-white/10"
-                aria-label="Chiudi notifica"
+                aria-label="Close notification"
               >
                 <span className="material-symbols-outlined text-[14px]">close</span>
               </button>
@@ -1118,7 +1218,7 @@ export function SocialHubPage() {
         ) : null}
       </AnimatePresence>
 
-      {loading ? <p className="text-sm text-slate-400">Caricamento area social...</p> : null}
+      {loading ? <p className="text-sm text-slate-400">Loading social area...</p> : null}
 
       {!loading ? (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
@@ -1128,7 +1228,7 @@ export function SocialHubPage() {
             </div>
             <div className="space-y-3">
               {friends.length === 0 ? (
-                <p className="rounded-xl border border-[#1f1f2e] bg-[#13131a] px-4 py-5 text-sm text-slate-400">Non hai ancora amici accettati.</p>
+                <p className="rounded-xl border border-[#1f1f2e] bg-[#13131a] px-4 py-5 text-sm text-slate-400">You do not have accepted friends yet.</p>
               ) : (
                 friends.map((friend) => (
                   <article key={friend.id_persona} className="social-glow-card group flex items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-all duration-300 hover:border-violet-500/30">
@@ -1156,51 +1256,70 @@ export function SocialHubPage() {
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {myGroups.length === 0 ? (
-                <p className="md:col-span-2 rounded-xl border border-[#1f1f2e] bg-[#13131a] px-4 py-5 text-sm text-slate-400">Non fai ancora parte di gruppi.</p>
+                <p className="md:col-span-2 rounded-xl border border-[#1f1f2e] bg-[#13131a] px-4 py-5 text-sm text-slate-400">You are not part of any groups yet.</p>
               ) : (
                 myGroups.map((group) => (
                   <button
                     key={group.id_gruppo}
                     onClick={() => navigate(`/groups/${group.id_gruppo}`)}
-                    className="social-glow-card rounded-2xl border border-violet-500/20 bg-[#13131a] p-5 text-left transition-all duration-300 hover:-translate-y-0.5 hover:border-violet-400/35 hover:bg-[#191927]"
+                    className="social-glow-card neo-card group relative flex min-h-[230px] flex-col gap-5 rounded-2xl border border-violet-500/20 bg-[#13131a] p-6 text-left transition-all duration-300 hover:-translate-y-1 hover:border-signal/40"
                   >
-                    <div className="mb-4 flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-bold text-slate-100">{group.nome}</h3>
-                        <p className="text-xs text-slate-400">{group.privacy} group</p>
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-signal/10 blur-2xl transition-opacity duration-300 group-hover:opacity-100" />
+
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.25em] text-signal">My Group</span>
+                        <h3 className="truncate text-xl font-bold transition-colors group-hover:text-signal">{group.nome}</h3>
                       </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${group.privacy === 'Public' ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200' : 'border-violet-400/35 bg-violet-500/10 text-violet-200'}`}>
+                        {group.privacy}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-canvas/45">Top 4 Ranking</p>
+                      <div className="space-y-1.5">
+                        {(groupRankingPreviewById[group.id_gruppo] ?? []).slice(0, 4).map((row, index) => (
+                          <div key={`${group.id_gruppo}-${row.username}-${index}`} className="flex items-center justify-between text-sm text-canvas/80">
+                            <span className="inline-flex items-center gap-2 truncate">
+                              <span className="text-[10px] font-black text-canvas/45">{String(index + 1).padStart(2, '0')}</span>
+                              <span className="truncate">{row.username}</span>
+                            </span>
+                            <span className="text-xs font-bold text-emerald-300">{row.value}</span>
+                          </div>
+                        ))}
+                        {(groupRankingPreviewById[group.id_gruppo] ?? []).length === 0 ? (
+                          <p className="text-xs text-canvas/45">Ranking preview unavailable.</p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-auto flex items-center justify-between border-t border-canvas/10 pt-4">
                       <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${roleChipColor(group.ruolo)}`}>
                         {group.ruolo}
                       </span>
-                    </div>
-                    <div className="space-y-1 border-t border-[#232337] pt-3">
-                      <p className="text-xs text-slate-400">{group.descrizione || 'Nessuna descrizione'}</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-slate-500">Budget iniziale gruppo</span>
-                        <span className="text-xs font-semibold text-violet-300">${Number(group.budget_iniziale ?? '0').toFixed(2)}</span>
-                      </div>
-                      <div className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-violet-300/90">
+                      <span className="rounded-lg bg-signal px-4 py-2 text-xs font-bold uppercase text-obsidian transition-all duration-300 group-hover:bg-signal/85">
                         Open Group
-                        <span className="material-symbols-outlined text-sm">arrow_forward</span>
-                      </div>
+                      </span>
                     </div>
                   </button>
                 ))
               )}
 
-              <article className="social-glow-card flex flex-col items-center justify-center rounded-2xl border border-dashed border-violet-500/35 bg-violet-500/5 p-6 text-center">
+              <button
+                type="button"
+                onClick={openCreateModal}
+                className="social-glow-card group flex w-full flex-col items-center justify-center rounded-2xl border border-dashed border-violet-500/35 bg-violet-500/5 p-6 text-center transition-all duration-300 hover:-translate-y-1 hover:border-violet-400/60 hover:bg-violet-500/10"
+              >
                 <div className="grid h-12 w-12 place-items-center rounded-full border border-violet-500/30 bg-violet-500/10">
-                  <span className="material-symbols-outlined text-violet-300">add_circle</span>
+                  <span className="material-symbols-outlined text-violet-300 transition-transform duration-300 group-hover:scale-105">add_circle</span>
                 </div>
                 <h3 className="mt-4 text-base font-bold text-slate-100">Create Squad</h3>
-                <p className="mt-1 text-xs text-slate-400">Configura gruppo, privacy, budget e inviti in un unico flusso.</p>
-                <button
-                  onClick={openCreateModal}
-                  className="mt-4 rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600"
-                >
+                <p className="mt-1 text-xs text-slate-400">Set up group, privacy, budget, and invites in one flow.</p>
+                <span className="mt-4 rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 group-hover:bg-violet-600">
                   Create Group
-                </button>
-              </article>
+                </span>
+              </button>
             </div>
           </section>
         </div>
@@ -1226,7 +1345,7 @@ export function SocialHubPage() {
                 <div className="mb-6 flex items-center justify-between">
                   <button
                     onClick={() => setCreateModalOpen(false)}
-                    aria-label="Torna indietro"
+                    aria-label="Go back"
                     className="inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
                   >
                     <span className="material-symbols-outlined text-2xl">arrow_back</span>
@@ -1258,7 +1377,7 @@ export function SocialHubPage() {
                     <input
                       value={createForm.nome}
                       onChange={(e) => setCreateForm((prev) => ({ ...prev, nome: e.target.value }))}
-                      placeholder="Inserisci nome gruppo"
+                      placeholder="Enter group name"
                       className="h-11 w-full rounded-xl border border-[#2a2a39] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
                     />
                   </div>
@@ -1316,7 +1435,7 @@ export function SocialHubPage() {
                     <textarea
                       value={createForm.descrizione}
                       onChange={(e) => setCreateForm((prev) => ({ ...prev, descrizione: e.target.value }))}
-                      placeholder="Descrivi il gruppo..."
+                      placeholder="Describe the group..."
                       rows={3}
                       className="w-full rounded-xl border border-[#2a2a39] bg-[#13131a] px-3 py-2 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
                     />
@@ -1327,7 +1446,7 @@ export function SocialHubPage() {
                   <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Invite people</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {selectedInvitees.length === 0 ? (
-                      <span className="text-xs text-slate-500">Nessun invitato selezionato.</span>
+                      <span className="text-xs text-slate-500">No invitees selected.</span>
                     ) : (
                       selectedInvitees.map((person) => (
                         <span key={person.id_persona} className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-200">
@@ -1347,18 +1466,18 @@ export function SocialHubPage() {
                   <input
                     value={inviteSearchTerm}
                     onChange={(e) => setInviteSearchTerm(e.target.value)}
-                    placeholder="Cerca persona per nickname..."
+                    placeholder="Search people by username..."
                     className="mt-3 h-10 w-full rounded-lg border border-[#2a2a39] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
                   />
 
-                  {inviteSearchLoading ? <p className="mt-2 text-xs text-slate-400">Ricerca utenti in corso...</p> : null}
+                  {inviteSearchLoading ? <p className="mt-2 text-xs text-slate-400">Searching users...</p> : null}
                   {inviteSearchTerm.trim() && inviteSearchResults.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500">Nessun match globale: sotto trovi i tuoi amici come fallback.</p>
+                    <p className="mt-2 text-xs text-slate-500">No global matches: your friends are shown below as fallback.</p>
                   ) : null}
 
                   <div className="mt-3 max-h-52 space-y-2 overflow-y-auto pr-1">
                     {inviteCandidates.length === 0 ? (
-                      <p className="text-xs text-slate-500">Nessuna persona disponibile per l'invito.</p>
+                      <p className="text-xs text-slate-500">No people available for invitation.</p>
                     ) : (
                       inviteCandidates.map((person) => {
                         const isSelf = person.id_persona === user?.id_persona;
@@ -1389,10 +1508,10 @@ export function SocialHubPage() {
                                     <span className="rounded-full border border-slate-400/25 bg-slate-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">Search</span>
                                   ) : null}
                                   {isSelf ? (
-                                    <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Già nel gruppo</span>
+                                    <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Already in group</span>
                                   ) : null}
                                   {isAlreadyInvited ? (
-                                    <span className="rounded-full border border-violet-400/35 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-200">Già invitato</span>
+                                    <span className="rounded-full border border-violet-400/35 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-200">Already invited</span>
                                   ) : null}
                                 </div>
                               </div>
@@ -1417,14 +1536,14 @@ export function SocialHubPage() {
                     disabled={creatingGroup}
                     className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
                   >
-                    Annulla
+                    Cancel
                   </button>
                   <button
                     onClick={() => void handleCreateGroup()}
                     disabled={creatingGroup}
                     className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
                   >
-                    {creatingGroup ? 'Creazione in corso...' : 'Create Group'}
+                    {creatingGroup ? 'Creating...' : 'Create Group'}
                   </button>
                 </div>
               </div>
@@ -1453,7 +1572,7 @@ export function SocialHubPage() {
                 <div className="mb-5 flex items-center justify-between">
                   <button
                     onClick={() => closeAccountModal()}
-                    aria-label="Torna indietro"
+                    aria-label="Go back"
                     className="inline-flex w-fit items-center gap-1 text-violet-300 transition-all hover:-translate-x-1 hover:text-violet-200"
                   >
                     <span className="material-symbols-outlined text-2xl">arrow_back</span>
@@ -1480,7 +1599,7 @@ export function SocialHubPage() {
                       </span>
                     </button>
                     <h3 className="mt-3 text-center text-lg font-bold text-slate-100">{user?.username}</h3>
-                    <p className="mt-1 text-center text-xs text-slate-400">Gestisci credenziali, foto e sicurezza account.</p>
+                    <p className="mt-1 text-center text-xs text-slate-400">Manage credentials, profile photo, and account security.</p>
                     <div className="mt-4 space-y-2 border-t border-[#232337] pt-3 text-xs text-slate-300">
                       <div className="flex items-center justify-between">
                         <span>Friends</span>
@@ -1554,23 +1673,36 @@ export function SocialHubPage() {
 
                     <div className="rounded-2xl border border-[#2a2a39] bg-[#13131a] p-4">
                       <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Security</p>
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setShowAccountPasswords((prev) => !prev)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-violet-500/25 bg-violet-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-violet-200 transition-colors hover:bg-violet-500/20"
+                          aria-label={showAccountPasswords ? 'Hide passwords' : 'Show passwords'}
+                        >
+                          <span className="material-symbols-outlined text-sm leading-none">
+                            {showAccountPasswords ? 'visibility_off' : 'visibility'}
+                          </span>
+                          {showAccountPasswords ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
                       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                         <input
-                          type="password"
+                          type={showAccountPasswords ? 'text' : 'password'}
                           value={accountForm.oldPassword}
                           onChange={(e) => setAccountForm((prev) => ({ ...prev, oldPassword: e.target.value }))}
                           placeholder="Current password"
                           className="h-10 rounded-lg border border-[#2a2a39] bg-[#101019] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
                         />
                         <input
-                          type="password"
+                          type={showAccountPasswords ? 'text' : 'password'}
                           value={accountForm.newPassword}
                           onChange={(e) => setAccountForm((prev) => ({ ...prev, newPassword: e.target.value }))}
                           placeholder="New password"
                           className="h-10 rounded-lg border border-[#2a2a39] bg-[#101019] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
                         />
                         <input
-                          type="password"
+                          type={showAccountPasswords ? 'text' : 'password'}
                           value={accountForm.confirmNewPassword}
                           onChange={(e) => setAccountForm((prev) => ({ ...prev, confirmNewPassword: e.target.value }))}
                           placeholder="Confirm new password"
@@ -1586,6 +1718,54 @@ export function SocialHubPage() {
                       </button>
                     </div>
 
+                    <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.16em] text-rose-300/90">Danger zone</p>
+                      <p className="mt-2 text-xs text-rose-100/90">
+                        Deleting your account removes your login credentials permanently. This action cannot be undone.
+                      </p>
+
+                      <div className="mt-3 space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold uppercase tracking-wide text-rose-200/85">
+                            Type your username to continue
+                          </label>
+                          <input
+                            value={deleteUsernameInput}
+                            onChange={(event) => setDeleteUsernameInput(event.target.value)}
+                            placeholder={user?.username ?? 'username'}
+                            className="h-10 w-full rounded-lg border border-rose-400/35 bg-[#2a1016] px-3 text-sm text-rose-100 outline-none transition-all focus:border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+                          />
+                        </div>
+
+                        <label className="inline-flex items-center gap-2 text-xs text-rose-100/90">
+                          <input
+                            type="checkbox"
+                            checked={deleteAcknowledge}
+                            onChange={(event) => setDeleteAcknowledge(event.target.checked)}
+                            className="h-4 w-4 rounded border-rose-400/40 bg-[#2a1016]"
+                          />
+                          I understand this will permanently disable my account login.
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!isDeleteUsernameConfirmed || !deleteAcknowledge) {
+                              setAccountError('Confirm username and acknowledgment before deleting account.');
+                              return;
+                            }
+                            setAccountError(null);
+                            setDeletePhraseInput('');
+                            setDeleteConfirmationOpen(true);
+                          }}
+                          disabled={!isDeleteUsernameConfirmed || !deleteAcknowledge || deletingAccount}
+                          className="rounded-lg bg-rose-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-rose-600 disabled:opacity-60"
+                        >
+                          Delete account
+                        </button>
+                      </div>
+                    </div>
+
                     {accountError ? (
                       <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
                         {accountError}
@@ -1598,6 +1778,57 @@ export function SocialHubPage() {
                     ) : null}
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteConfirmationOpen ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/75 p-6"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 22, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 14, scale: 0.96 }}
+              transition={{ duration: 0.26, ease: 'easeInOut' }}
+              className="w-full max-w-lg rounded-2xl border border-rose-400/35 bg-[#111118] p-5 shadow-2xl shadow-rose-900/30"
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-rose-300/90">Final confirmation</p>
+              <p className="mt-3 text-sm text-slate-200">
+                To permanently delete this account, type <span className="font-bold text-rose-200">DELETE MY ACCOUNT</span>.
+              </p>
+
+              <input
+                value={deletePhraseInput}
+                onChange={(event) => setDeletePhraseInput(event.target.value)}
+                placeholder="DELETE MY ACCOUNT"
+                className="mt-4 h-10 w-full rounded-lg border border-rose-400/35 bg-[#2a1016] px-3 text-sm text-rose-100 outline-none transition-all focus:border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+              />
+
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteAccount()}
+                  disabled={!isDeletePhraseConfirmed || deletingAccount}
+                  className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-rose-600 disabled:opacity-60"
+                >
+                  {deletingAccount ? 'Deleting...' : 'Permanently delete account'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmationOpen(false)}
+                  disabled={deletingAccount}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-60"
+                >
+                  Cancel
+                </button>
               </div>
             </motion.div>
           </motion.div>
@@ -1620,9 +1851,9 @@ export function SocialHubPage() {
               transition={{ duration: 0.28, ease: 'easeInOut' }}
               className="w-full max-w-md rounded-2xl border border-rose-400/35 bg-[#111118] p-5 shadow-2xl shadow-rose-900/25"
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-rose-300/85">Conferma blocco utente</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-rose-300/85">Confirm user block</p>
               <p className="mt-3 text-sm text-slate-200">
-                Vuoi bloccare <span className="font-bold text-rose-200">{blockingTarget.username}</span>? L'utente non potra interagire con te.
+                Do you want to block <span className="font-bold text-rose-200">{blockingTarget.username}</span>? This user will not be able to interact with you.
               </p>
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <button
@@ -1630,14 +1861,14 @@ export function SocialHubPage() {
                   disabled={friendActionId === blockingTarget.id}
                   className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-rose-600 disabled:opacity-70"
                 >
-                  {friendActionId === blockingTarget.id ? 'Blocco in corso...' : 'Conferma blocco'}
+                  {friendActionId === blockingTarget.id ? 'Blocking...' : 'Confirm block'}
                 </button>
                 <button
                   onClick={() => setBlockingTarget(null)}
                   disabled={friendActionId === blockingTarget.id}
                   className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
                 >
-                  Annulla
+                  Cancel
                 </button>
               </div>
             </motion.div>

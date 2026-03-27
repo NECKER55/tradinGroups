@@ -186,7 +186,7 @@ export function WorkspacePreviewSection() {
         setWatchlist(watchlistRes.results);
       } catch (err) {
         if (!active) return;
-        setError(err instanceof Error ? err.message : 'Impossibile caricare il workspace personale.');
+        setError(err instanceof Error ? err.message : 'Unable to load personal workspace.');
       } finally {
         if (active) setLoading(false);
       }
@@ -294,7 +294,7 @@ export function WorkspacePreviewSection() {
         setSearchError(null);
       } catch (err) {
         if (!active) return;
-        setSearchError(err instanceof Error ? err.message : 'Errore ricerca titoli.');
+        setSearchError(err instanceof Error ? err.message : 'Stock search failed.');
         setSearchResults([]);
       } finally {
         if (active) setSearchLoading(false);
@@ -321,7 +321,7 @@ export function WorkspacePreviewSection() {
     const parsed = Number(balanceAmount);
 
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      setBalanceMessage('Inserisci un importo valido maggiore di 0.');
+      setBalanceMessage('Enter a valid amount greater than 0.');
       setPendingBalanceAction(null);
       return;
     }
@@ -332,10 +332,10 @@ export function WorkspacePreviewSection() {
 
   async function handleBalanceUpdate(type: 'deposit' | 'withdraw') {
     const parsed = Number(balanceAmount);
-    const actionLabel = type === 'deposit' ? 'deposito' : 'prelievo';
+    const actionLabel = type === 'deposit' ? 'deposit' : 'withdrawal';
 
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      setBalanceMessage('Inserisci un importo valido maggiore di 0.');
+      setBalanceMessage('Enter a valid amount greater than 0.');
       return;
     }
 
@@ -347,10 +347,10 @@ export function WorkspacePreviewSection() {
     try {
       const response = await updatePrivateBalance({ delta_liquidita: signed.toFixed(2) });
       setCash(toNumber(response.portfolio.liquidita));
-      setBalanceMessage(`Operazione confermata: ${actionLabel} di ${toCurrency(parsed)}. ${response.message}`);
+      setBalanceMessage(`Operation confirmed: ${actionLabel} of ${toCurrency(parsed)}. ${response.message}`);
       setIsFundsPanelOpen(false);
     } catch (err) {
-      setBalanceMessage(err instanceof Error ? err.message : 'Operazione non riuscita.');
+      setBalanceMessage(err instanceof Error ? err.message : 'Operation failed.');
     } finally {
       setBalanceLoading(false);
     }
@@ -365,7 +365,7 @@ export function WorkspacePreviewSection() {
       const privateBalance = await getPrivateBalance();
       setCash(toNumber(privateBalance.portfolio.liquidita));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Impossibile annullare la transazione pending.');
+      setError(err instanceof Error ? err.message : 'Unable to cancel pending transaction.');
     } finally {
       setCancellingOrderId(null);
     }
@@ -393,13 +393,13 @@ export function WorkspacePreviewSection() {
           />
         </div>
 
-        {searchLoading ? <p className="mt-3 text-xs text-slate-400">Ricerca in corso...</p> : null}
+        {searchLoading ? <p className="mt-3 text-xs text-slate-400">Searching...</p> : null}
         {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
 
         {searchTerm.trim() && !searchLoading && !searchError ? (
           <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
             {searchResults.length === 0 ? (
-              <p className="text-xs text-slate-400">Nessun titolo trovato.</p>
+              <p className="text-xs text-slate-400">No stocks found.</p>
             ) : (
               searchResults.map((stock) => (
                 <div
@@ -411,7 +411,7 @@ export function WorkspacePreviewSection() {
                     <p className="text-sm font-bold text-slate-100">{stock.id_stock} - {stock.nome_societa}</p>
                     <p className="text-[10px] uppercase text-slate-500">{stock.settore}</p>
                   </div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-300">Apri</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-300">Open</span>
                 </div>
               ))
             )}
@@ -471,7 +471,7 @@ export function WorkspacePreviewSection() {
               className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 px-5 text-sm font-semibold text-violet-200 transition-all duration-300 hover:bg-violet-500/20"
             >
               <span className="material-symbols-outlined text-base">account_balance_wallet</span>
-              {isFundsPanelOpen ? 'Chiudi gestione fondi' : 'Gestisci fondi'}
+              {isFundsPanelOpen ? 'Close funds panel' : 'Manage funds'}
             </button>
           </div>
 
@@ -497,7 +497,7 @@ export function WorkspacePreviewSection() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Wallet Actions</p>
-                      <p className="text-sm text-slate-300">Imposta un importo e scegli se depositare o prelevare.</p>
+                      <p className="text-sm text-slate-300">Set an amount and choose whether to deposit or withdraw.</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-200">
@@ -507,7 +507,7 @@ export function WorkspacePreviewSection() {
                         type="button"
                         onClick={() => setIsFundsPanelOpen(false)}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-200 transition-colors hover:bg-violet-500/20"
-                        aria-label="Chiudi pannello fondi"
+                        aria-label="Close funds panel"
                       >
                         <span className="material-symbols-outlined text-lg leading-none">close</span>
                       </button>
@@ -522,7 +522,7 @@ export function WorkspacePreviewSection() {
                       value={balanceAmount}
                       onChange={(e) => setBalanceAmount(e.target.value)}
                       className="h-11 w-full rounded-xl border border-[#1f1f2e] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
-                      placeholder="Importo"
+                      placeholder="Amount"
                     />
                     <button
                       onClick={() => requestBalanceAction('deposit')}
@@ -567,27 +567,27 @@ export function WorkspacePreviewSection() {
                 transition={{ duration: 0.28, ease: 'easeInOut' }}
                 className="w-full max-w-md rounded-2xl border border-violet-400/30 bg-[#111118] p-5 shadow-2xl shadow-violet-900/30"
               >
-              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Conferma operazione</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-violet-300/80">Confirm operation</p>
               <p className="mt-3 text-sm text-slate-200">
-                Confermi di voler eseguire un
-                <span className="font-bold"> {pendingBalanceAction === 'deposit' ? 'deposito' : 'prelievo'} </span>
-                di <span className="font-bold text-violet-200">{toCurrency(Number(balanceAmount) || 0)}</span>?
+                Confirm you want to execute a
+                <span className="font-bold"> {pendingBalanceAction === 'deposit' ? 'deposit' : 'withdrawal'} </span>
+                of <span className="font-bold text-violet-200">{toCurrency(Number(balanceAmount) || 0)}</span>?
               </p>
-              <p className="mt-2 text-xs text-slate-400">Durante questa finestra tutte le altre azioni sono bloccate.</p>
+              <p className="mt-2 text-xs text-slate-400">During this step all other actions are temporarily blocked.</p>
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => void handleBalanceUpdate(pendingBalanceAction)}
                   disabled={balanceLoading}
                   className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
                 >
-                  {balanceLoading ? 'Conferma in corso...' : 'Conferma'}
+                  {balanceLoading ? 'Confirming...' : 'Confirm'}
                 </button>
                 <button
                   onClick={() => setPendingBalanceAction(null)}
                   disabled={balanceLoading}
                   className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
                 >
-                  Annulla
+                  Cancel
                 </button>
               </div>
               </motion.div>
@@ -625,7 +625,7 @@ export function WorkspacePreviewSection() {
           ))}
         </div>
 
-        {loading ? <p className="text-sm text-slate-400">Caricamento dati workspace...</p> : null}
+        {loading ? <p className="text-sm text-slate-400">Loading workspace data...</p> : null}
         {error ? <p className="text-sm text-rose-400">{error}</p> : null}
 
         {!loading && !error && activeTab === 'assets' ? (
@@ -633,7 +633,7 @@ export function WorkspacePreviewSection() {
             items={holdings}
             currentPrices={currentPrices}
             onSelect={(idStock) => navigate(buildPersonalStockHref(idStock))}
-            emptyLabel="Nessuna azione in possesso."
+            emptyLabel="No holdings in this portfolio."
           />
         ) : null}
 
@@ -718,7 +718,7 @@ export function WorkspacePreviewSection() {
                 <tbody className="divide-y divide-[#1f1f2e] bg-[#0f0f14]">
                   {filteredTransactions.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-4 text-slate-400" colSpan={7}>Nessuna transazione disponibile con i filtri selezionati.</td>
+                      <td className="px-4 py-4 text-slate-400" colSpan={7}>No transactions available with the selected filters.</td>
                     </tr>
                   ) : (
                     filteredTransactions.map((tx) => (

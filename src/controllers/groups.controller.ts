@@ -911,6 +911,13 @@ export async function leaveGroup(req: Request, res: Response): Promise<void> {
     }
 
     await prisma.$transaction(async (tx) => {
+      await tx.invito_Gruppo.deleteMany({
+        where: {
+          id_gruppo,
+          id_mittente: sub,
+        },
+      });
+
       await tx.portafoglio.deleteMany({
         where: {
           id_gruppo,
@@ -953,6 +960,13 @@ export async function leaveGroup(req: Request, res: Response): Promise<void> {
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.invito_Gruppo.deleteMany({
+      where: {
+        id_gruppo,
+        id_mittente: sub,
+      },
+    });
+
     await tx.portafoglio.deleteMany({
       where: {
         id_gruppo,
@@ -1018,9 +1032,27 @@ export async function getMyPendingGroupInvites(req: Request, res: Response): Pro
 export async function getMySentGroupInvites(req: Request, res: Response): Promise<void> {
   const { sub } = (req as AuthRequest).user;
 
+  const memberships = await prisma.membro_Gruppo.findMany({
+    where: { id_persona: sub },
+    select: { id_gruppo: true },
+  });
+
+  const memberGroupIds = memberships.map((row) => row.id_gruppo);
+
+  if (memberGroupIds.length === 0) {
+    res.json({
+      count: 0,
+      invites: [],
+    });
+    return;
+  }
+
   const invites = await prisma.invito_Gruppo.findMany({
     where: {
       id_mittente: sub,
+      id_gruppo: {
+        in: memberGroupIds,
+      },
     },
     include: {
       gruppo: {

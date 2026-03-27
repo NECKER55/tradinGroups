@@ -4,6 +4,7 @@ import type { ApiError, AuthResponse, LoginPayload, RegisterPayload, User } from
 
 let accessToken: string | null = null;
 let refreshPromise: Promise<string> | null = null;
+export const AUTH_TOKEN_EVENT = 'auth:token-updated';
 
 export function getAccessToken(): string | null {
   return accessToken;
@@ -15,6 +16,10 @@ export function setAccessToken(token: string | null): void {
     sessionStorage.setItem('access_token', token);
   } else {
     sessionStorage.removeItem('access_token');
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent<string | null>(AUTH_TOKEN_EVENT, { detail: token }));
   }
 }
 
@@ -44,7 +49,7 @@ async function refreshAccessToken(): Promise<string> {
       const data = await parseJson<{ access_token?: string } | ApiError>(response);
       if (!response.ok || !('access_token' in data) || !data.access_token) {
         const errorPayload = data as ApiError;
-        throw new Error(errorPayload.message ?? 'Sessione scaduta');
+        throw new Error(errorPayload.message ?? 'Session expired');
       }
 
       setAccessToken(data.access_token);
@@ -74,30 +79,35 @@ function withAuthHeaders(init: RequestInit = {}): RequestInit {
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, withAuthHeaders(init));
+  const shouldAttemptRefresh = response.status === 401
+    && path !== ROUTES.AUTH.REFRESH
+    && path !== ROUTES.AUTH.LOGIN
+    && path !== ROUTES.AUTH.REGISTER;
 
-  if (response.status === 401 && path !== ROUTES.AUTH.REFRESH) {
+  if (shouldAttemptRefresh) {
     try {
       await refreshAccessToken();
-      const retriedResponse = await fetch(`${API_BASE_URL}${path}`, withAuthHeaders(init));
-      const retriedData = await parseJson<T | ApiError>(retriedResponse);
-
-      if (!retriedResponse.ok) {
-        const errorPayload = retriedData as ApiError;
-        throw new Error(errorPayload.message ?? 'Errore API');
-      }
-
-      return retriedData as T;
     } catch {
       setAccessToken(null);
-      throw new Error('Sessione scaduta, effettua di nuovo il login');
+      throw new Error('Session expired. Please log in again.');
     }
+
+    const retriedResponse = await fetch(`${API_BASE_URL}${path}`, withAuthHeaders(init));
+    const retriedData = await parseJson<T | ApiError>(retriedResponse);
+
+    if (!retriedResponse.ok) {
+      const errorPayload = retriedData as ApiError;
+      throw new Error(errorPayload.message ?? 'API error');
+    }
+
+    return retriedData as T;
   }
 
   const data = await parseJson<T | ApiError>(response);
 
   if (!response.ok) {
     const errorPayload = data as ApiError;
-    throw new Error(errorPayload.message ?? 'Errore API');
+    throw new Error(errorPayload.message ?? 'API error');
   }
 
   return data as T;
@@ -164,5 +174,11 @@ export async function changeMyEmail(email: string): Promise<{ message: string; e
   return apiRequest<{ message: string; email: string }>(ROUTES.AUTH.CHANGE_EMAIL, {
     method: 'PUT',
     body: JSON.stringify({ email }),
+  });
+}
+
+export async function deleteUserAccount(userId: number): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(ROUTES.AUTH.DELETE_USER(userId), {
+    method: 'DELETE',
   });
 }
