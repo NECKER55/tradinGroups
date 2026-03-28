@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const groups_controller_1 = require("../controllers/groups.controller");
 const auth_1 = require("../middleware/auth");
+const uploadProfilePhoto_1 = require("../middleware/uploadProfilePhoto");
 const groupsRouter = (0, express_1.Router)();
 groupsRouter.get('/search', auth_1.optionalAuth, groups_controller_1.searchGroupsByName);
 groupsRouter.get('/:id_gruppo/members', auth_1.optionalAuth, groups_controller_1.getGroupMembers);
@@ -15,7 +16,8 @@ groupsRouter.delete('/:id_gruppo', auth_1.authenticate, groups_controller_1.dele
 groupsRouter.patch('/:id_gruppo/privacy', auth_1.authenticate, groups_controller_1.updateGroupPrivacy);
 groupsRouter.patch('/:id_gruppo/name', auth_1.authenticate, groups_controller_1.updateGroupName);
 groupsRouter.patch('/:id_gruppo/description', auth_1.authenticate, groups_controller_1.updateGroupDescription);
-groupsRouter.patch('/:id_gruppo/photo', auth_1.authenticate, groups_controller_1.updateGroupPhoto);
+groupsRouter.patch('/:id_gruppo/photo', auth_1.authenticate, uploadProfilePhoto_1.uploadProfilePhoto.single('photo'), groups_controller_1.updateGroupPhoto);
+groupsRouter.delete('/:id_gruppo/photo', auth_1.authenticate, groups_controller_1.removeGroupPhoto);
 groupsRouter.post('/:id_gruppo/invites', auth_1.authenticate, groups_controller_1.inviteToGroup);
 groupsRouter.delete('/:id_gruppo/invites/:id_persona', auth_1.authenticate, groups_controller_1.cancelSentGroupInvite);
 groupsRouter.get('/invites/pending', auth_1.authenticate, groups_controller_1.getMyPendingGroupInvites);

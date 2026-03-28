@@ -1,8 +1,10 @@
 import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../../features/auth/context/AuthContext';
+import { resolveUserPhotoUrl } from '../utils/cloudinary';
 
 export function MainLayout() {
   const { isAuthenticated, user, logout } = useAuth();
+  const navAvatarUrl = resolveUserPhotoUrl(user?.photo_url, 64);
 
   return (
     <div className="min-h-screen bg-obsidian text-canvas">
@@ -28,8 +30,8 @@ export function MainLayout() {
                 <Link to="/social?account=1" className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition-colors hover:bg-canvas/10">
                   <span className="text-base font-bold text-canvas/85">{user?.username}</span>
                   <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-canvas/20 bg-canvas/10">
-                    {user?.photo_url ? (
-                      <img src={user.photo_url} alt="Profile" className="h-full w-full object-cover" />
+                    {navAvatarUrl ? (
+                      <img src={navAvatarUrl} alt="Profile" className="h-full w-full object-cover" />
                     ) : (
                       <span className="material-symbols-outlined text-base text-canvas/70">person</span>
                     )}

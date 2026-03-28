@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { resolveStoredProfilePhotoUrl, uploadProfileImage } from '../lib/cloudinary';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jwt';
 import { AuthRequest } from '../types';
 
@@ -20,7 +21,7 @@ const RegisterSchema = z.object({
 });
 
 const LoginSchema = z.object({
-  email:    z.string().email(),
+  identifier: z.string().trim().min(1),
   password: z.string(),
 });
 
@@ -37,14 +38,6 @@ const ChangeUsernameSchema = z.object({
   username: z.string().trim().min(3).max(50),
 });
 
-const ChangePhotoSchema = z.object({
-  photo_url: z.union([
-    z.string().trim().url().max(255),
-    z.literal(''),
-    z.null(),
-  ]).optional(),
-});
-
 const ChangeEmailSchema = z.object({
   email: z.string().trim().email('Invalid email.').max(100),
 });
@@ -54,6 +47,82 @@ const DeleteUserParamsSchema = z.object({
 });
 
 const REFRESH_COOKIE_PATH = '/api/auth/refresh';
+
+async function detachMemberFromGroup(
+  tx: Prisma.TransactionClient,
+  id_gruppo: number,
+  id_persona: number,
+): Promise<void> {
+  await tx.invito_Gruppo.deleteMany({
+    where: {
+      id_gruppo,
+      id_mittente: id_persona,
+    },
+  });
+
+  await tx.portafoglio.deleteMany({
+    where: {
+      id_gruppo,
+      id_persona,
+    },
+  });
+
+  await tx.membro_Gruppo.deleteMany({
+    where: {
+      id_gruppo,
+      id_persona,
+    },
+  });
+}
+
+async function autoLeaveAllGroupsForPersona(
+  tx: Prisma.TransactionClient,
+  id_persona: number,
+): Promise<void> {
+  const memberships = await tx.membro_Gruppo.findMany({
+    where: { id_persona },
+    select: {
+      id_gruppo: true,
+      ruolo: true,
+    },
+  });
+
+  for (const membership of memberships) {
+    if (membership.ruolo === 'Owner') {
+      const otherMembers = await tx.membro_Gruppo.findMany({
+        where: {
+          id_gruppo: membership.id_gruppo,
+          id_persona: { not: id_persona },
+        },
+        select: {
+          id_persona: true,
+          ruolo: true,
+        },
+      });
+
+      if (otherMembers.length === 0) {
+        await tx.gruppo.deleteMany({ where: { id_gruppo: membership.id_gruppo } });
+        continue;
+      }
+
+      const newOwner = otherMembers.find((m) => m.ruolo === 'Admin')
+        ?? otherMembers.find((m) => m.ruolo === 'User')
+        ?? otherMembers[0];
+
+      await tx.membro_Gruppo.update({
+        where: {
+          id_persona_id_gruppo: {
+            id_persona: newOwner.id_persona,
+            id_gruppo: membership.id_gruppo,
+          },
+        },
+        data: { ruolo: 'Owner' },
+      });
+    }
+
+    await detachMemberFromGroup(tx, membership.id_gruppo, id_persona);
+  }
+}
 
 // ─── POST /api/auth/register ──────────────────────────────────
 
@@ -68,35 +137,188 @@ export async function register(req: Request, res: Response): Promise<void> {
   const username = parsed.data.username.trim();
   const { password } = parsed.data;
 
-  // Unicità email e username
-  const [existingEmail, existingUsername] = await Promise.all([
-    prisma.credenziali.findUnique({ where: { email: normalizedEmail } }),
-    prisma.persona.findUnique({ where: { username } }),
+  const [existingByEmailRows, existingByUsernameRows] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      id_persona: number;
+      username: string;
+      is_banned: boolean;
+      is_deleted: boolean;
+      is_superuser: boolean;
+      password: string;
+    }>>(Prisma.sql`
+      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
+      FROM credenziali c
+      JOIN persona p ON p.id_persona = c.id_persona
+      WHERE c.email = ${normalizedEmail}
+      LIMIT 1
+    `),
+    prisma.$queryRaw<Array<{
+      id_persona: number;
+      is_banned: boolean;
+      is_deleted: boolean;
+    }>>(Prisma.sql`
+      SELECT id_persona, is_banned, is_deleted
+      FROM persona
+      WHERE username = ${username}
+      LIMIT 1
+    `),
   ]);
 
-  if (existingEmail) {
+  const existingByEmail = existingByEmailRows[0] ?? null;
+  const existingByUsername = existingByUsernameRows[0] ?? null;
+
+  if (existingByEmail?.is_banned) {
+    res.status(403).json({
+      error: 'USER_BANNED',
+      message: 'This account is banned and cannot be re-registered.',
+    });
+    return;
+  }
+
+  if (existingByUsername && existingByUsername.is_banned && existingByUsername.id_persona !== existingByEmail?.id_persona) {
+    res.status(403).json({
+      error: 'USER_BANNED',
+      message: 'This username belongs to a banned account and cannot be used.',
+    });
+    return;
+  }
+
+  if (existingByEmail && !existingByEmail.is_deleted) {
     res.status(409).json({ error: 'EMAIL_IN_USE', message: 'Email is already in use.' });
     return;
   }
-  if (existingUsername) {
+
+  // Se l'account e soft-deleted, la registrazione riattiva lo stesso account.
+  // Lo username inserito viene ignorato e resta quello originale.
+  if (existingByEmail && existingByEmail.is_deleted) {
+    const isSamePassword = await bcrypt.compare(password, existingByEmail.password);
+    const nextHash = isSamePassword ? existingByEmail.password : await bcrypt.hash(password, 12);
+
+    await prisma.$transaction(async (tx) => {
+      await autoLeaveAllGroupsForPersona(tx, existingByEmail.id_persona);
+
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE persona
+        SET is_deleted = false,
+            photo_url = NULL
+        WHERE id_persona = ${existingByEmail.id_persona}
+      `);
+
+      if (!isSamePassword) {
+        await tx.credenziali.update({
+          where: { id_persona: existingByEmail.id_persona },
+          data: { password: nextHash },
+        });
+      }
+    });
+
+    const reactivated = await prisma.persona.findUnique({
+      where: { id_persona: existingByEmail.id_persona },
+      select: { id_persona: true, username: true, is_superuser: true },
+    });
+
+    if (!reactivated) {
+      res.status(500).json({ error: 'REGISTER_FAILED', message: 'Unable to reactivate account.' });
+      return;
+    }
+
+    const accessToken = signAccessToken({
+      sub: reactivated.id_persona,
+      username: reactivated.username,
+      is_superuser: reactivated.is_superuser,
+    });
+    const refreshToken = signRefreshToken({
+      sub: reactivated.id_persona,
+      username: reactivated.username,
+      is_superuser: reactivated.is_superuser,
+    });
+
+    setRefreshCookie(res, refreshToken);
+
+    res.status(200).json({
+      message: 'Deleted account reactivated successfully.',
+      access_token: accessToken,
+      user: {
+        id_persona: reactivated.id_persona,
+        username: reactivated.username,
+        is_superuser: reactivated.is_superuser,
+      },
+    });
+    return;
+  }
+
+  if (existingByUsername) {
     res.status(409).json({ error: 'USERNAME_IN_USE', message: 'Username is already in use.' });
     return;
   }
 
   const hashed = await bcrypt.hash(password, 12);
 
-  // Crea Persona + Credenziali + Portafoglio personale in un'unica transazione
-  const persona = await prisma.$transaction(async (tx) => {
-    const p = await tx.persona.create({
-      data: {
-        username,
-        credenziali: { create: { email: normalizedEmail, password: hashed } },
-        portafogli:  { create: { liquidita: 0 } }, // portafoglio personale
-      },
-      select: { id_persona: true, username: true, is_superuser: true },
+  async function createPersonaWithCredentials() {
+    return prisma.$transaction(async (tx) => {
+      const p = await tx.persona.create({
+        data: {
+          username,
+          credenziali: { create: { email: normalizedEmail, password: hashed } },
+          portafogli:  { create: { liquidita: 0 } }, // portafoglio personale
+        },
+        select: { id_persona: true, username: true, is_superuser: true },
+      });
+      return p;
     });
-    return p;
-  });
+  }
+
+  // Crea Persona + Credenziali + Portafoglio personale in un'unica transazione.
+  // In caso di DB restore, la sequence di id_persona puo restare indietro:
+  // riallineiamo e riproviamo una sola volta.
+  let persona;
+  try {
+    persona = await createPersonaWithCredentials();
+  } catch (error: unknown) {
+    const isPersonaIdUniqueViolation = (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2002'
+      && Array.isArray(error.meta?.target)
+      && error.meta.target.includes('id_persona')
+    );
+
+    if (!isPersonaIdUniqueViolation) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === 'P2002'
+      ) {
+        res.status(409).json({
+          error: 'USERNAME_IN_USE',
+          message: 'Username is already in use.',
+        });
+        return;
+      }
+
+      res.status(500).json({
+        error: 'REGISTER_FAILED',
+        message: 'Unable to complete registration.',
+      });
+      return;
+    }
+
+    await prisma.$executeRawUnsafe(`
+      SELECT setval(
+        pg_get_serial_sequence('"persona"', 'id_persona'),
+        COALESCE((SELECT MAX(id_persona) FROM "persona"), 0) + 1,
+        false
+      )
+    `);
+
+    try {
+      persona = await createPersonaWithCredentials();
+    } catch {
+      res.status(500).json({
+        error: 'REGISTER_FAILED',
+        message: 'Registration failed because persona id sequence is out of sync. Please contact support.',
+      });
+      return;
+    }
+  }
 
   const accessToken  = signAccessToken({ sub: persona.id_persona, username: persona.username, is_superuser: persona.is_superuser });
   const refreshToken = signRefreshToken({ sub: persona.id_persona, username: persona.username, is_superuser: persona.is_superuser });
@@ -123,13 +345,40 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const email = parsed.data.email.trim().toLowerCase();
+  const identifier = parsed.data.identifier.trim();
   const password = parsed.data.password;
 
-  const creds = await prisma.credenziali.findUnique({
-    where:   { email },
-    include: { persona: { select: { id_persona: true, username: true, is_banned: true, is_superuser: true } } },
-  });
+  const rows = identifier.includes('@')
+    ? await prisma.$queryRaw<Array<{
+      id_persona: number;
+      username: string;
+      is_banned: boolean;
+      is_deleted: boolean;
+      is_superuser: boolean;
+      password: string;
+    }>>(Prisma.sql`
+      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
+      FROM credenziali c
+      JOIN persona p ON p.id_persona = c.id_persona
+      WHERE c.email = ${identifier.toLowerCase()}
+      LIMIT 1
+    `)
+    : await prisma.$queryRaw<Array<{
+      id_persona: number;
+      username: string;
+      is_banned: boolean;
+      is_deleted: boolean;
+      is_superuser: boolean;
+      password: string;
+    }>>(Prisma.sql`
+      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
+      FROM persona p
+      JOIN credenziali c ON c.id_persona = p.id_persona
+      WHERE LOWER(p.username) = LOWER(${identifier})
+      LIMIT 1
+    `);
+
+  const creds = rows[0] ?? null;
 
   // Generic message for security (do not disclose whether email or password is wrong)
   const invalid = () =>
@@ -140,15 +389,31 @@ export async function login(req: Request, res: Response): Promise<void> {
   const match = await bcrypt.compare(password, creds.password);
   if (!match) { invalid(); return; }
 
-  if (creds.persona.is_banned) {
+  if (creds.is_banned) {
+    await prisma.$transaction(async (tx) => {
+      await autoLeaveAllGroupsForPersona(tx, creds.id_persona);
+    });
+
     res.status(403).json({ error: 'USER_BANNED', message: 'Account suspended. Contact support.' });
     return;
   }
 
+  if (creds.is_deleted) {
+    await prisma.$transaction(async (tx) => {
+      await autoLeaveAllGroupsForPersona(tx, creds.id_persona);
+    });
+
+    res.status(403).json({
+      error: 'ACCOUNT_DELETED',
+      message: 'Account is deleted. Register again with the same email to reactivate it.',
+    });
+    return;
+  }
+
   const payload = {
-    sub:          creds.persona.id_persona,
-    username:     creds.persona.username,
-    is_superuser: creds.persona.is_superuser,
+    sub:          creds.id_persona,
+    username:     creds.username,
+    is_superuser: creds.is_superuser,
   };
 
   const accessToken  = signAccessToken(payload);
@@ -159,9 +424,9 @@ export async function login(req: Request, res: Response): Promise<void> {
   res.json({
     access_token: accessToken,
     user: {
-      id_persona:   creds.persona.id_persona,
-      username:     creds.persona.username,
-      is_superuser: creds.persona.is_superuser,
+      id_persona:   creds.id_persona,
+      username:     creds.username,
+      is_superuser: creds.is_superuser,
     },
   });
 }
@@ -182,12 +447,28 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     const payload = verifyRefreshToken(token);
 
     // Verifica che l'utente esista ancora e non sia bannato
-    const persona = await prisma.persona.findUnique({
-      where:  { id_persona: payload.sub },
-      select: { id_persona: true, username: true, is_banned: true, is_superuser: true },
-    });
+    const rows = await prisma.$queryRaw<Array<{
+      id_persona: number;
+      username: string;
+      is_banned: boolean;
+      is_deleted: boolean;
+      is_superuser: boolean;
+    }>>(Prisma.sql`
+      SELECT id_persona, username, is_banned, is_deleted, is_superuser
+      FROM persona
+      WHERE id_persona = ${payload.sub}
+      LIMIT 1
+    `);
 
-    if (!persona || persona.is_banned) {
+    const persona = rows[0] ?? null;
+
+    if (!persona || persona.is_banned || persona.is_deleted) {
+      if (persona?.id_persona) {
+        await prisma.$transaction(async (tx) => {
+          await autoLeaveAllGroupsForPersona(tx, persona.id_persona);
+        });
+      }
+
       clearRefreshCookies(res);
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid session.' });
       return;
@@ -217,34 +498,50 @@ export async function logout(_req: Request, res: Response): Promise<void> {
 export async function me(req: Request, res: Response): Promise<void> {
   const { sub } = (req as AuthRequest).user;
 
-  const persona = await prisma.persona.findUnique({
-    where:  { id_persona: sub },
-    select: {
-      id_persona: true,
-      username: true,
-      photo_url: true,
-      is_superuser: true,
-      is_banned: true,
-      credenziali: {
-        select: {
-          email: true,
-        },
-      },
-    },
-  });
+  const rows = await prisma.$queryRaw<Array<{
+    id_persona: number;
+    username: string;
+    photo_url: string | null;
+    is_superuser: boolean;
+    is_banned: boolean;
+    is_deleted: boolean;
+    email: string | null;
+  }>>(Prisma.sql`
+    SELECT p.id_persona, p.username, p.photo_url, p.is_superuser, p.is_banned, p.is_deleted, c.email
+    FROM persona p
+    LEFT JOIN credenziali c ON c.id_persona = p.id_persona
+    WHERE p.id_persona = ${sub}
+    LIMIT 1
+  `);
+
+  const persona = rows[0] ?? null;
 
   if (!persona) {
     res.status(404).json({ error: 'NOT_FOUND', message: 'User not found.' });
     return;
   }
 
+  if (persona.is_banned || persona.is_deleted) {
+    await prisma.$transaction(async (tx) => {
+      await autoLeaveAllGroupsForPersona(tx, persona.id_persona);
+    });
+
+    res.status(403).json({
+      error: persona.is_banned ? 'USER_BANNED' : 'ACCOUNT_DELETED',
+      message: persona.is_banned
+        ? 'Account suspended. Contact support.'
+        : 'Account is deleted. Register again with the same email to reactivate it.',
+    });
+    return;
+  }
+
   res.json({
     id_persona: persona.id_persona,
     username: persona.username,
-    photo_url: persona.photo_url,
+    photo_url: resolveStoredProfilePhotoUrl(persona.photo_url),
     is_superuser: persona.is_superuser,
     is_banned: persona.is_banned,
-    email: persona.credenziali?.email ?? null,
+    email: persona.email ?? null,
   });
 }
 
@@ -323,18 +620,21 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
     return;
   }
 
-  const targetUser = await prisma.persona.findUnique({
-    where: { id_persona: targetUserId },
-    select: {
-      id_persona: true,
-      username: true,
-      credenziali: {
-        select: {
-          email: true,
-        },
-      },
-    },
-  });
+  const targetRows = await prisma.$queryRaw<Array<{
+    id_persona: number;
+    username: string;
+    is_banned: boolean;
+    is_deleted: boolean;
+    email: string | null;
+  }>>(Prisma.sql`
+    SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, c.email
+    FROM persona p
+    LEFT JOIN credenziali c ON c.id_persona = p.id_persona
+    WHERE p.id_persona = ${targetUserId}
+    LIMIT 1
+  `);
+
+  const targetUser = targetRows[0] ?? null;
 
   if (!targetUser) {
     res.status(404).json({
@@ -344,7 +644,7 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
     return;
   }
 
-  if (!targetUser.credenziali) {
+  if (!targetUser.email) {
     res.status(409).json({
       error: 'ACCOUNT_ALREADY_DELETED',
       message: 'This account has already been removed.',
@@ -352,43 +652,23 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
     return;
   }
 
-  let anonymizedUsername: string | null = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const suffix = `${Date.now().toString(36)}${attempt}`;
-    const candidate = `deleted_user_${targetUserId}_${suffix}`.slice(0, 50);
-
-    const exists = await prisma.persona.findUnique({
-      where: { username: candidate },
-      select: { id_persona: true },
-    });
-
-    if (!exists) {
-      anonymizedUsername = candidate;
-      break;
-    }
-  }
-
-  if (!anonymizedUsername) {
-    res.status(500).json({
-      error: 'ACCOUNT_DELETE_FAILED',
-      message: 'Unable to generate anonymized profile identifier.',
+  if (targetUser.is_deleted) {
+    res.status(409).json({
+      error: 'ACCOUNT_ALREADY_DELETED',
+      message: 'This account is already marked as deleted.',
     });
     return;
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.credenziali.delete({
-      where: { id_persona: targetUserId },
-    });
+    await autoLeaveAllGroupsForPersona(tx, targetUserId);
 
-    await tx.persona.update({
-      where: { id_persona: targetUserId },
-      data: {
-        username: anonymizedUsername,
-        photo_url: null,
-        is_banned: true,
-      },
-    });
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE persona
+      SET is_deleted = true,
+          photo_url = NULL
+      WHERE id_persona = ${targetUserId}
+    `);
   });
 
   if (isSelf) {
@@ -397,8 +677,8 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
 
   res.json({
     message: isSelf
-      ? 'Your account has been deleted successfully.'
-      : `User ${targetUserId} account has been deleted successfully.`,
+      ? 'Your account has been marked as deleted.'
+      : `User ${targetUserId} account has been marked as deleted.`,
   });
 }
 
@@ -496,7 +776,7 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
       user: {
         id_persona: updated.id_persona,
         username: updated.username,
-        photo_url: updated.photo_url,
+        photo_url: resolveStoredProfilePhotoUrl(updated.photo_url),
         is_superuser: updated.is_superuser,
         is_banned: updated.is_banned,
       },
@@ -521,29 +801,36 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
 }
 
 export async function changeMyPhoto(req: Request, res: Response): Promise<void> {
-  const parsed = ChangePhotoSchema.safeParse(req.body);
+  const file = req.file;
 
-  if (!parsed.success) {
+  if (!file) {
     res.status(400).json({
-      error: 'VALIDATION_ERROR',
-      message: parsed.error.errors[0]?.message ?? 'Invalid payload.',
+      error: 'PHOTO_FILE_REQUIRED',
+      message: 'Profile image file is required.',
+    });
+    return;
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    res.status(413).json({
+      error: 'PHOTO_TOO_LARGE',
+      message: 'Profile image must be 2MB or smaller.',
     });
     return;
   }
 
   const { sub } = (req as AuthRequest).user;
-  const photoUrl = (() => {
-    const raw = parsed.data.photo_url;
-    if (raw === undefined || raw === null) return null;
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  })();
 
   try {
+    const uploaded = await uploadProfileImage({
+      userId: sub,
+      buffer: file.buffer,
+    });
+
     const updated = await prisma.persona.update({
       where: { id_persona: sub },
       data: {
-        photo_url: photoUrl,
+        photo_url: uploaded.public_id,
       },
       select: {
         id_persona: true,
@@ -556,13 +843,62 @@ export async function changeMyPhoto(req: Request, res: Response): Promise<void> 
 
     res.json({
       message: 'Profile photo updated successfully.',
-      user: updated,
+      user: {
+        ...updated,
+        photo_url: resolveStoredProfilePhotoUrl(updated.photo_url),
+      },
     });
-  } catch {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown upload error';
+
+    if (errorMessage.startsWith('CLOUDINARY_NOT_CONFIGURED')) {
+      res.status(503).json({
+        error: 'PHOTO_UPLOAD_UNAVAILABLE',
+        message: 'Profile photo upload is temporarily unavailable. Cloudinary is not configured on the server.',
+      });
+      return;
+    }
+
+    console.error('[changeMyPhoto] upload failed:', error);
     res.status(500).json({
       error: 'PHOTO_UPDATE_FAILED',
-      message: 'Unable to update profile photo.',
+      message: process.env.NODE_ENV === 'development'
+        ? `Unable to update profile photo: ${errorMessage}`
+        : 'Unable to update profile photo.',
     });
+  }
+}
+
+export async function removeMyPhoto(req: Request, res: Response): Promise<void> {
+  const { sub } = (req as AuthRequest).user;
+
+  try {
+    const persona = await prisma.persona.findUnique({ where: { id_persona: sub }, select: { photo_url: true, id_persona: true, username: true, is_superuser: true, is_banned: true } });
+
+    if (!persona) {
+      res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User not found.' });
+      return;
+    }
+
+    const prev = persona.photo_url ?? null;
+
+    const updated = await prisma.persona.update({ where: { id_persona: sub }, data: { photo_url: null }, select: { id_persona: true, username: true, photo_url: true, is_superuser: true, is_banned: true } });
+
+    if (prev) {
+      try {
+        // lazy delete from cloudinary if configured
+        const { deleteImage } = await import('../lib/cloudinary');
+        await deleteImage(prev);
+      } catch (err) {
+        // log and continue
+        // eslint-disable-next-line no-console
+        console.warn('[removeMyPhoto] cloudinary deletion failed', err);
+      }
+    }
+
+    res.json({ message: 'Profile photo removed.', user: { ...updated, photo_url: null } });
+  } catch (error) {
+    res.status(500).json({ error: 'PHOTO_REMOVE_FAILED', message: 'Unable to remove profile photo.' });
   }
 }
 

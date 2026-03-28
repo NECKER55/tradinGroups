@@ -64,7 +64,11 @@ async function refreshAccessToken(): Promise<string> {
 
 function withAuthHeaders(init: RequestInit = {}): RequestInit {
   const headers = new Headers(init.headers ?? {});
-  headers.set('Content-Type', 'application/json');
+  const isFormDataBody = typeof FormData !== 'undefined' && init.body instanceof FormData;
+
+  if (!isFormDataBody) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (accessToken) {
     headers.set('Authorization', `Bearer ${accessToken}`);
@@ -167,6 +171,22 @@ export async function changeMyPhoto(photoUrl: string | null): Promise<{ message:
   return apiRequest<{ message: string; user: User }>(ROUTES.AUTH.CHANGE_PHOTO, {
     method: 'PUT',
     body: JSON.stringify({ photo_url: photoUrl }),
+  });
+}
+
+export async function uploadMyPhoto(file: File): Promise<{ message: string; user: User }> {
+  const formData = new FormData();
+  formData.append('photo', file);
+
+  return apiRequest<{ message: string; user: User }>(ROUTES.AUTH.CHANGE_PHOTO, {
+    method: 'PUT',
+    body: formData,
+  });
+}
+
+export async function removeMyPhoto(): Promise<{ message: string; user: User }> {
+  return apiRequest<{ message: string; user: User }>(ROUTES.AUTH.CHANGE_PHOTO, {
+    method: 'DELETE',
   });
 }
 

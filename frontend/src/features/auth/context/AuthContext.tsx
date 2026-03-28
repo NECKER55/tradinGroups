@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   AUTH_TOKEN_EVENT,
   getAccessToken,
@@ -24,9 +24,25 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function areUsersEquivalent(a: User | null, b: User | null): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+
+  return a.id_persona === b.id_persona
+    && a.username === b.username
+    && (a.email ?? null) === (b.email ?? null)
+    && (a.photo_url ?? null) === (b.photo_url ?? null)
+    && a.is_superuser === b.is_superuser
+    && (a.is_banned ?? null) === (b.is_banned ?? null);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const setUserIfChanged = useCallback((nextUser: User | null) => {
+    setUser((prev) => (areUsersEquivalent(prev, nextUser) ? prev : nextUser));
+  }, []);
 
   useEffect(() => {
     hydrateAccessTokenFromSession();
@@ -39,34 +55,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         const profile = await me();
-        setUser(profile);
+        setUserIfChanged(profile);
       } catch {
         setAccessToken(null);
-        setUser(null);
+        setUserIfChanged(null);
       } finally {
         setLoading(false);
       }
     }
 
     void bootstrapAuth();
-  }, []);
+  }, [setUserIfChanged]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     function syncProfileFromToken(token: string | null) {
       if (!token) {
-        setUser(null);
+        setUserIfChanged(null);
         setLoading(false);
         return;
       }
 
       setLoading(true);
       void me()
-        .then((profile) => setUser(profile))
+        .then((profile) => setUserIfChanged(profile))
         .catch(() => {
           setAccessToken(null);
-          setUser(null);
+          setUserIfChanged(null);
         })
         .finally(() => setLoading(false));
     }
@@ -88,37 +104,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener(AUTH_TOKEN_EVENT, onTokenUpdate as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, []);
+  }, [setUserIfChanged]);
+
+  const login = useCallback(async (payload: LoginPayload) => {
+    const response = await loginApi(payload);
+    setAccessToken(response.access_token);
+    setUserIfChanged(response.user);
+  }, [setUserIfChanged]);
+
+  const register = useCallback(async (payload: RegisterPayload) => {
+    const response = await registerApi(payload);
+    setAccessToken(response.access_token);
+    setUserIfChanged(response.user);
+  }, [setUserIfChanged]);
+
+  const logout = useCallback(async () => {
+    // Clear local auth state first to prevent stale authenticated UI on refresh/race conditions.
+    setAccessToken(null);
+    setUserIfChanged(null);
+    try {
+      await logoutApi();
+    } catch {
+      // Best effort server logout; local state is already cleared.
+    }
+  }, [setUserIfChanged]);
+
+  const refreshProfile = useCallback(async () => {
+    const profile = await me();
+    setUserIfChanged(profile);
+  }, [setUserIfChanged]);
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
     isAuthenticated: Boolean(user),
-    login: async (payload) => {
-      const response = await loginApi(payload);
-      setAccessToken(response.access_token);
-      setUser(response.user);
-    },
-    register: async (payload) => {
-      const response = await registerApi(payload);
-      setAccessToken(response.access_token);
-      setUser(response.user);
-    },
-    logout: async () => {
-      // Clear local auth state first to prevent stale authenticated UI on refresh/race conditions.
-      setAccessToken(null);
-      setUser(null);
-      try {
-        await logoutApi();
-      } catch {
-        // Best effort server logout; local state is already cleared.
-      }
-    },
-    refreshProfile: async () => {
-      const profile = await me();
-      setUser(profile);
-    },
-  }), [loading, user]);
+    login,
+    register,
+    logout,
+    refreshProfile,
+  }), [loading, user, login, register, logout, refreshProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

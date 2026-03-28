@@ -118,7 +118,6 @@ export interface LeaveGroupPayload {
 export interface UpdateGroupProfilePayload {
   nome?: string;
   descrizione?: string | null;
-  photo_url?: string | null;
 }
 
 export async function getGroupProfile(groupId: number): Promise<GroupProfileResponse> {
@@ -205,9 +204,24 @@ export async function updateGroupDescription(groupId: number, descrizione: strin
   });
 }
 
-export async function updateGroupPhoto(groupId: number, photo_url: string | null): Promise<GroupActionMessageResponse> {
+export async function updateGroupPhoto(groupId: number, file: File): Promise<GroupActionMessageResponse> {
+  const formData = new FormData();
+  formData.append('photo', file);
+
   return apiRequest<GroupActionMessageResponse>(ROUTES.GROUPS.UPDATE_PHOTO(groupId), {
     method: 'PATCH',
-    body: JSON.stringify({ photo_url }),
+    body: formData,
+  });
+}
+
+export async function removeGroupPhoto(groupId: number): Promise<GroupActionMessageResponse> {
+  return apiRequest<GroupActionMessageResponse>(ROUTES.GROUPS.UPDATE_PHOTO(groupId), {
+    method: 'DELETE',
+  });
+}
+
+export async function deleteGroup(groupId: number): Promise<GroupActionMessageResponse> {
+  return apiRequest<GroupActionMessageResponse>(ROUTES.GROUPS.BY_ID(groupId), {
+    method: 'DELETE',
   });
 }

@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createGroup = createGroup;
 exports.deleteGroup = deleteGroup;
@@ -20,11 +53,13 @@ exports.updateGroupPrivacy = updateGroupPrivacy;
 exports.updateGroupName = updateGroupName;
 exports.updateGroupDescription = updateGroupDescription;
 exports.updateGroupPhoto = updateGroupPhoto;
+exports.removeGroupPhoto = removeGroupPhoto;
 exports.getMyGroups = getMyGroups;
 exports.getGroupRanking = getGroupRanking;
 exports.getMyGroupWorkspace = getMyGroupWorkspace;
 const client_1 = require("@prisma/client");
 const zod_1 = require("zod");
+const cloudinary_1 = require("../lib/cloudinary");
 const prisma_1 = require("../lib/prisma");
 const GroupIdParamsSchema = zod_1.z.object({
     id_gruppo: zod_1.z.coerce.number().int().positive(),
@@ -81,9 +116,6 @@ const UpdateGroupNameSchema = zod_1.z.object({
 const UpdateGroupDescriptionSchema = zod_1.z.object({
     descrizione: zod_1.z.string().trim().max(1000).optional(),
 });
-const UpdateGroupPhotoSchema = zod_1.z.object({
-    photo_url: zod_1.z.string().trim().url().max(255).nullable().optional(),
-});
 const LeaveGroupSchema = zod_1.z.object({
     new_owner_id: zod_1.z.coerce.number().int().positive().optional(),
 });
@@ -107,6 +139,62 @@ async function getMembershipOrNull(id_gruppo, id_persona) {
             },
         },
     });
+}
+async function ensureGroupPortfolio(tx, id_gruppo, id_persona, initialLiquidity) {
+    const existing = await tx.portafoglio.findUnique({
+        where: {
+            id_persona_id_gruppo: {
+                id_persona,
+                id_gruppo,
+            },
+        },
+        select: {
+            id_portafoglio: true,
+            liquidita: true,
+            id_persona: true,
+            id_gruppo: true,
+        },
+    });
+    if (existing)
+        return existing;
+    try {
+        return await tx.portafoglio.create({
+            data: {
+                id_persona,
+                id_gruppo,
+                liquidita: initialLiquidity,
+            },
+            select: {
+                id_portafoglio: true,
+                liquidita: true,
+                id_persona: true,
+                id_gruppo: true,
+            },
+        });
+    }
+    catch (error) {
+        // Covers race conditions or existing DB trigger behavior that inserts the same row first.
+        if (error instanceof client_1.Prisma.PrismaClientKnownRequestError
+            && error.code === 'P2002') {
+            const fallback = await tx.portafoglio.findUnique({
+                where: {
+                    id_persona_id_gruppo: {
+                        id_persona,
+                        id_gruppo,
+                    },
+                },
+                select: {
+                    id_portafoglio: true,
+                    liquidita: true,
+                    id_persona: true,
+                    id_gruppo: true,
+                },
+            });
+            if (fallback)
+                return fallback;
+        }
+        throw error;
+    }
 }
 async function requireMembership(id_gruppo, id_persona, res) {
     const membership = await getMembershipOrNull(id_gruppo, id_persona);
@@ -220,12 +308,19 @@ async function createGroup(req, res) {
                     budget_iniziale: groupInitialBudget,
                 },
             });
-            return { group, membership };
+            const portfolio = await ensureGroupPortfolio(tx, group.id_gruppo, sub, membership.budget_iniziale);
+            return { group, membership, portfolio };
         });
         res.status(201).json({
             message: 'Gruppo creato con successo.',
             group: result.group,
             membership: result.membership,
+            portfolio: {
+                id_portafoglio: result.portfolio.id_portafoglio,
+                liquidita: result.portfolio.liquidita.toString(),
+                id_persona: result.portfolio.id_persona,
+                id_gruppo: result.portfolio.id_gruppo,
+            },
         });
     }
     catch (error) {
@@ -996,7 +1091,7 @@ async function acceptGroupInvite(req, res) {
                 id_gruppo,
             },
         });
-        return tx.membro_Gruppo.create({
+        const createdMembership = await tx.membro_Gruppo.create({
             data: {
                 id_persona: sub,
                 id_gruppo,
@@ -1004,6 +1099,8 @@ async function acceptGroupInvite(req, res) {
                 budget_iniziale: invite.gruppo.budget_iniziale,
             },
         });
+        await ensureGroupPortfolio(tx, id_gruppo, sub, createdMembership.budget_iniziale);
+        return createdMembership;
     });
     res.json({
         message: 'Invito accettato. Sei entrato nel gruppo come User.',
@@ -1135,7 +1232,7 @@ async function getGroupPublicProfile(req, res) {
         group: {
             id_gruppo: readContext.group.id_gruppo,
             nome: readContext.group.nome,
-            photo_url: readContext.group.photo_url,
+            photo_url: (0, cloudinary_1.resolveStoredProfilePhotoUrl)(readContext.group.photo_url),
             privacy: readContext.group.privacy,
             descrizione: readContext.group.descrizione,
             budget_iniziale: readContext.group.budget_iniziale.toString(),
@@ -1389,19 +1486,30 @@ async function updateGroupDescription(req, res) {
 }
 async function updateGroupPhoto(req, res) {
     const parsedParams = GroupIdParamsSchema.safeParse(req.params);
-    const parsedBody = UpdateGroupPhotoSchema.safeParse(req.body);
-    if (!parsedParams.success || !parsedBody.success) {
+    if (!parsedParams.success) {
         res.status(400).json({
             error: 'VALIDATION_ERROR',
-            message: parsedParams.error?.errors[0]?.message
-                ?? parsedBody.error?.errors[0]?.message
-                ?? 'Payload non valido.',
+            message: parsedParams.error?.errors[0]?.message ?? 'Payload non valido.',
+        });
+        return;
+    }
+    const file = req.file;
+    if (!file) {
+        res.status(400).json({
+            error: 'PHOTO_FILE_REQUIRED',
+            message: 'Il file immagine del gruppo e obbligatorio.',
+        });
+        return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+        res.status(413).json({
+            error: 'PHOTO_TOO_LARGE',
+            message: 'L\'immagine gruppo deve essere al massimo 2MB.',
         });
         return;
     }
     const { sub } = req.user;
     const { id_gruppo } = parsedParams.data;
-    const photo_url = parsedBody.data.photo_url?.trim() || null;
     const group = await prisma_1.prisma.gruppo.findUnique({
         where: { id_gruppo },
         select: { id_gruppo: true },
@@ -1414,32 +1522,88 @@ async function updateGroupPhoto(req, res) {
         return;
     }
     const membership = await getMembershipOrNull(id_gruppo, sub);
-    if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
+    if (!membership || membership.ruolo !== 'Owner') {
         res.status(403).json({
-            error: 'INSUFFICIENT_ROLE',
-            message: 'Solo Owner o Admin possono modificare la foto del gruppo.',
+            error: 'ONLY_OWNER_CAN_UPDATE_GROUP_PHOTO',
+            message: 'Solo l\'owner puo modificare o aggiungere la foto del gruppo.',
         });
         return;
     }
-    const updated = await prisma_1.prisma.gruppo.update({
-        where: { id_gruppo },
-        data: { photo_url },
-        select: {
-            id_gruppo: true,
-            nome: true,
-            privacy: true,
-            photo_url: true,
-            descrizione: true,
-            budget_iniziale: true,
-        },
-    });
-    res.json({
-        message: 'Foto gruppo aggiornata con successo.',
-        group: {
-            ...updated,
-            budget_iniziale: updated.budget_iniziale.toString(),
-        },
-    });
+    try {
+        const uploaded = await (0, cloudinary_1.uploadGroupImage)({
+            groupId: id_gruppo,
+            buffer: file.buffer,
+        });
+        const updated = await prisma_1.prisma.gruppo.update({
+            where: { id_gruppo },
+            data: {
+                photo_url: uploaded.public_id,
+            },
+            select: {
+                id_gruppo: true,
+                nome: true,
+                privacy: true,
+                photo_url: true,
+                descrizione: true,
+                budget_iniziale: true,
+            },
+        });
+        res.json({
+            message: 'Foto gruppo aggiornata con successo.',
+            group: {
+                ...updated,
+                budget_iniziale: updated.budget_iniziale.toString(),
+            },
+        });
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown upload error';
+        if (errorMessage.startsWith('CLOUDINARY_NOT_CONFIGURED')) {
+            res.status(503).json({
+                error: 'PHOTO_UPLOAD_UNAVAILABLE',
+                message: 'Upload foto gruppo temporaneamente non disponibile. Cloudinary non configurato sul server.',
+            });
+            return;
+        }
+        console.error('[updateGroupPhoto] upload failed:', error);
+        res.status(500).json({
+            error: 'GROUP_PHOTO_UPDATE_FAILED',
+            message: 'Impossibile aggiornare la foto del gruppo.',
+        });
+    }
+}
+async function removeGroupPhoto(req, res) {
+    const parsed = GroupIdParamsSchema.safeParse(req.params);
+    if (!parsed.success) {
+        res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0]?.message ?? 'id_gruppo non valido.' });
+        return;
+    }
+    const { id_gruppo } = parsed.data;
+    const { sub } = req.user;
+    const membership = await getMembershipOrNull(id_gruppo, sub);
+    if (!membership || membership.ruolo !== 'Owner') {
+        res.status(403).json({ error: 'ONLY_OWNER_CAN_REMOVE_PHOTO', message: 'Solo l\'owner puo rimuovere la foto del gruppo.' });
+        return;
+    }
+    const group = await prisma_1.prisma.gruppo.findUnique({ where: { id_gruppo }, select: { photo_url: true } });
+    if (!group) {
+        res.status(404).json({ error: 'GROUP_NOT_FOUND', message: 'Gruppo non trovato.' });
+        return;
+    }
+    const prev = group.photo_url ?? null;
+    await prisma_1.prisma.gruppo.update({ where: { id_gruppo }, data: { photo_url: null } });
+    if (prev) {
+        try {
+            const { deleteImage } = await Promise.resolve().then(() => __importStar(require('../lib/cloudinary')));
+            await deleteImage(prev);
+        }
+        catch (err) {
+            // log and continue
+            // eslint-disable-next-line no-console
+            console.warn('[removeGroupPhoto] cloudinary deletion failed', err);
+        }
+    }
+    res.json({ message: 'Group photo removed.' });
 }
 async function getMyGroups(req, res) {
     const { sub } = req.user;
@@ -1567,7 +1731,7 @@ async function getGroupRanking(req, res) {
         posizione: index + 1,
         id_persona: row.id_persona,
         username: row.username,
-        photo_url: row.photo_url,
+        photo_url: (0, cloudinary_1.resolveStoredProfilePhotoUrl)(row.photo_url),
         ruolo: row.ruolo,
         valore_totale: row.valore_totale.toString(),
     }));
@@ -1597,7 +1761,7 @@ async function getMyGroupWorkspace(req, res) {
         });
         return;
     }
-    const [group, portfolio] = await Promise.all([
+    const [group, portfolioRaw] = await Promise.all([
         prisma_1.prisma.gruppo.findUnique({
             where: { id_gruppo },
             select: {
@@ -1622,6 +1786,31 @@ async function getMyGroupWorkspace(req, res) {
             },
         }),
     ]);
+    let portfolio = portfolioRaw;
+    if (!portfolio) {
+        portfolio = await prisma_1.prisma.$transaction(async (tx) => {
+            const currentMembership = await tx.membro_Gruppo.findUnique({
+                where: {
+                    id_persona_id_gruppo: {
+                        id_persona: sub,
+                        id_gruppo,
+                    },
+                },
+                select: {
+                    budget_iniziale: true,
+                },
+            });
+            if (!currentMembership)
+                return null;
+            const ensured = await ensureGroupPortfolio(tx, id_gruppo, sub, currentMembership.budget_iniziale);
+            return {
+                id_portafoglio: ensured.id_portafoglio,
+                liquidita: ensured.liquidita,
+                id_persona: ensured.id_persona,
+                id_gruppo: ensured.id_gruppo,
+            };
+        });
+    }
     if (!group) {
         res.status(404).json({
             error: 'GROUP_NOT_FOUND',

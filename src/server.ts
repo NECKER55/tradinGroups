@@ -15,6 +15,33 @@ import { startDailyPortfolioValuationJob } from './jobs/portfolioValuation';
 const app  = express();
 const PORT = parseInt(process.env.PORT ?? '3000');
 
+const allowedOrigins = new Set(
+  [
+    process.env.FRONTEND_URL,
+    ...(process.env.FRONTEND_URLS ?? '').split(','),
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+  ]
+    .map((origin) => origin?.trim())
+    .filter((origin): origin is string => Boolean(origin)),
+);
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`CORS_ORIGIN_NOT_ALLOWED:${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+
 // ─── Security ─────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
@@ -35,19 +62,35 @@ app.use(helmet({
     },
   },
 }));
-app.use(cors({
-  origin:      process.env.FRONTEND_URL ?? 'http://localhost:5173',
-  credentials: true, // necessario per i cookie HttpOnly del refresh token
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // ─── Rate limiting globale ────────────────────────────────────
-app.use(rateLimit({
+const methodAwareRateLimitMessage = {
+  error: 'TOO_MANY_REQUESTS',
+  message: 'Troppe richieste. Riprova tra poco.',
+};
+
+const readLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuti
-  max:      200,
-  message:  { error: 'TOO_MANY_REQUESTS', message: 'Troppe richieste. Riprova tra poco.' },
+  max: 1200,
+  message: methodAwareRateLimitMessage,
   standardHeaders: true,
-  legacyHeaders:   false,
-}));
+  legacyHeaders: false,
+  skip: (req) => !['GET', 'HEAD'].includes(req.method),
+});
+
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minuti
+  max: 300,
+  message: methodAwareRateLimitMessage,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+});
+
+app.use(readLimiter);
+app.use(writeLimiter);
 
 // Rate limiting più stretto per gli endpoint di auth
 app.use('/api/auth/login',    rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));

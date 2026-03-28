@@ -220,7 +220,7 @@ export function WorkspacePreviewSection() {
   }, [activeTab, isAuthenticated, personalPortfolioId, user]);
 
   useEffect(() => {
-    if (!isAuthenticated || !user) return;
+    if (!isAuthenticated || !user || activeTab !== 'history') return;
 
     const interval = setInterval(async () => {
       try {
@@ -229,10 +229,10 @@ export function WorkspacePreviewSection() {
       } catch {
         // Ignoriamo errori transient per evitare rumore UI durante polling.
       }
-    }, 8000);
+    }, 20000);
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, user]);
+  }, [activeTab, isAuthenticated, user]);
 
   const lastValue = history.length ? toNumber(history[history.length - 1].valore_totale) : 0;
   const previousValue = history.length > 1 ? toNumber(history[history.length - 2].valore_totale) : 0;

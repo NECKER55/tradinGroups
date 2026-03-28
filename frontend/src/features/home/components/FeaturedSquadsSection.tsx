@@ -4,6 +4,7 @@ import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { GroupSummary } from '../../social/api/socialHubApi';
 import { getGroupRanking } from '../../groups/api/groupDetailApi';
+import { resolveUserPhotoUrl } from '../../../shared/utils/cloudinary';
 
 type FeaturedSquadsSectionProps = {
   searchTerm: string;
@@ -18,7 +19,7 @@ type SquadCard = {
   name: string;
   privacy: 'Public' | 'Private';
   cta: string;
-  topFour: Array<{ label: string; value: string }>;
+  topFour: Array<{ label: string; value: string; photo_url?: string | null }>;
 };
 
 const featuredSquads: SquadCard[] = [
@@ -81,11 +82,19 @@ function toSearchCard(group: GroupSummary, index: number): SquadCard {
   };
 }
 
+function avatarFallback(name: string): string {
+  const clean = name.trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase();
+}
+
 export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, groupResults }: FeaturedSquadsSectionProps) {
   const query = searchTerm.trim();
   const queryActive = query.length > 0;
   const cardsContainerRef = useRef<HTMLDivElement | null>(null);
-  const [rankingPreviewByGroup, setRankingPreviewByGroup] = useState<Record<number, Array<{ label: string; value: string }>>>({});
+  const [rankingPreviewByGroup, setRankingPreviewByGroup] = useState<Record<number, Array<{ label: string; value: string; photo_url?: string | null }>>>({});
 
   const cards = useMemo(() => {
     if (!queryActive) {
@@ -120,6 +129,7 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
             rows: res.ranking.slice(0, 4).map((row) => ({
               label: row.username,
               value: toCompactCurrency(Number(row.valore_totale)),
+              photo_url: row.photo_url,
             })),
           };
         }),
@@ -127,7 +137,7 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
 
       if (!active) return;
 
-      const next: Record<number, Array<{ label: string; value: string }>> = {};
+      const next: Record<number, Array<{ label: string; value: string; photo_url?: string | null }>> = {};
       for (const row of results) {
         if (row.status === 'fulfilled') {
           next[row.value.id] = row.value.rows;
@@ -141,6 +151,8 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
       active = false;
     };
   }, [cards]);
+
+  const rankingAvatarRefreshKey = useMemo(() => Date.now(), [rankingPreviewByGroup, cards]);
 
   useEffect(() => {
     const container = cardsContainerRef.current;
@@ -232,6 +244,15 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
                       <div key={`${row.label}-${rowIndex}`} className="flex items-center justify-between text-sm text-canvas/80">
                         <span className="inline-flex items-center gap-2 truncate">
                           <span className="text-[10px] font-black text-canvas/45">{String(rowIndex + 1).padStart(2, '0')}</span>
+                          <span className="grid h-6 w-6 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-[9px] font-black text-violet-200">
+                            {resolveUserPhotoUrl(row.photo_url ?? null, 48) ? (
+                              <img
+                                src={`${resolveUserPhotoUrl(row.photo_url ?? null, 48)}${resolveUserPhotoUrl(row.photo_url ?? null, 48)?.includes('?') ? '&' : '?'}rk=${rankingAvatarRefreshKey}`}
+                                alt={row.label}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : avatarFallback(row.label)}
+                          </span>
                           <span className="truncate">{row.label}</span>
                         </span>
                         <span className="text-xs font-bold text-emerald-300">{row.value}</span>

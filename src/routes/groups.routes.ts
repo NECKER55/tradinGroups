@@ -19,12 +19,14 @@ import {
   removeGroupMember,
   searchGroupsByName,
   updateGroupName,
+  removeGroupPhoto,
   updateGroupPhoto,
   updateGroupBudget,
   updateGroupDescription,
   updateGroupPrivacy,
 } from '../controllers/groups.controller';
 import { authenticate, optionalAuth } from '../middleware/auth';
+import { uploadProfilePhoto } from '../middleware/uploadProfilePhoto';
 
 const groupsRouter = Router();
 
@@ -40,7 +42,8 @@ groupsRouter.delete('/:id_gruppo', authenticate, deleteGroup);
 groupsRouter.patch('/:id_gruppo/privacy', authenticate, updateGroupPrivacy);
 groupsRouter.patch('/:id_gruppo/name', authenticate, updateGroupName);
 groupsRouter.patch('/:id_gruppo/description', authenticate, updateGroupDescription);
-groupsRouter.patch('/:id_gruppo/photo', authenticate, updateGroupPhoto);
+groupsRouter.patch('/:id_gruppo/photo', authenticate, uploadProfilePhoto.single('photo'), updateGroupPhoto);
+groupsRouter.delete('/:id_gruppo/photo', authenticate, removeGroupPhoto);
 
 groupsRouter.post('/:id_gruppo/invites', authenticate, inviteToGroup);
 groupsRouter.delete('/:id_gruppo/invites/:id_persona', authenticate, cancelSentGroupInvite);

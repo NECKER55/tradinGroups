@@ -418,12 +418,12 @@ export function StockDetailPage() {
                   <h2 className="text-3xl font-bold">{stockSymbol}</h2>
                   <button
                     onClick={() => void handleToggleWatchlist()}
-                    className="inline-flex items-center justify-center"
+                    className="inline-flex items-center justify-center stock-glow-ignore"
                     aria-label="Toggle watchlist"
                   >
                     <motion.span
-                      className="material-symbols-outlined text-2xl text-yellow-400"
-                      style={{ fontVariationSettings: `'FILL' ${watchlisted ? 1 : 0}` }}
+                      className={`material-symbols-outlined text-2xl ${watchlisted ? 'text-yellow-400' : 'text-white'}`}
+                      style={{ fontVariationSettings: `'FILL' ${watchlisted ? 1 : 0}, 'wght' 600, 'GRAD' 0, 'opsz' 24` }}
                       animate={{ scale: watchlisted ? [1, 1.16, 1] : [1, 0.88, 1], rotate: watchlisted ? [0, 8, 0] : [0, -8, 0] }}
                       transition={{ duration: 0.28, ease: 'easeInOut' }}
                     >

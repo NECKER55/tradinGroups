@@ -6,7 +6,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function LoginPage() {
 
     try {
       await login({
-        email: email.trim().toLowerCase(),
+        identifier: identifier.trim(),
         password,
       });
       const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
@@ -39,11 +39,11 @@ export function LoginPage() {
 
         <div className="mt-8 space-y-5">
           <label className="block">
-            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-canvas/50">Email</span>
+            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-canvas/50">Email Or Username</span>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               required
               className="w-full rounded-xl border border-canvas/15 bg-canvas/5 px-4 py-3 text-canvas placeholder:text-canvas/35 focus:border-signal focus:outline-none"
               placeholder="you@example.com"

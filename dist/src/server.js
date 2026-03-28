@@ -17,6 +17,29 @@ const tradingEngine_1 = require("./jobs/tradingEngine");
 const portfolioValuation_1 = require("./jobs/portfolioValuation");
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT ?? '3000');
+const allowedOrigins = new Set([
+    process.env.FRONTEND_URL,
+    ...(process.env.FRONTEND_URLS ?? '').split(','),
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+]
+    .map((origin) => origin?.trim())
+    .filter((origin) => Boolean(origin)));
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.has(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(new Error(`CORS_ORIGIN_NOT_ALLOWED:${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    optionsSuccessStatus: 204,
+};
 // ─── Security ─────────────────────────────────────────────────
 app.use((0, helmet_1.default)({
     contentSecurityPolicy: {
@@ -37,18 +60,31 @@ app.use((0, helmet_1.default)({
         },
     },
 }));
-app.use((0, cors_1.default)({
-    origin: process.env.FRONTEND_URL ?? 'http://localhost:5173',
-    credentials: true, // necessario per i cookie HttpOnly del refresh token
-}));
+app.use((0, cors_1.default)(corsOptions));
+app.options('*', (0, cors_1.default)(corsOptions));
 // ─── Rate limiting globale ────────────────────────────────────
-app.use((0, express_rate_limit_1.default)({
+const methodAwareRateLimitMessage = {
+    error: 'TOO_MANY_REQUESTS',
+    message: 'Troppe richieste. Riprova tra poco.',
+};
+const readLimiter = (0, express_rate_limit_1.default)({
     windowMs: 15 * 60 * 1000, // 15 minuti
-    max: 200,
-    message: { error: 'TOO_MANY_REQUESTS', message: 'Troppe richieste. Riprova tra poco.' },
+    max: 1200,
+    message: methodAwareRateLimitMessage,
     standardHeaders: true,
     legacyHeaders: false,
-}));
+    skip: (req) => !['GET', 'HEAD'].includes(req.method),
+});
+const writeLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 15 * 60 * 1000, // 15 minuti
+    max: 300,
+    message: methodAwareRateLimitMessage,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+});
+app.use(readLimiter);
+app.use(writeLimiter);
 // Rate limiting più stretto per gli endpoint di auth
 app.use('/api/auth/login', (0, express_rate_limit_1.default)({ windowMs: 15 * 60 * 1000, max: 10 }));
 app.use('/api/auth/register', (0, express_rate_limit_1.default)({ windowMs: 60 * 60 * 1000, max: 5 }));

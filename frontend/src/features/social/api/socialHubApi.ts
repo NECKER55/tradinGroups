@@ -42,7 +42,6 @@ export interface GroupSummary {
 export interface CreateGroupPayload {
   nome: string;
   privacy?: 'Public' | 'Private';
-  photo_url?: string;
   descrizione?: string;
   budget_iniziale?: string;
 }

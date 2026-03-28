@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { gsap } from 'gsap';
 import { useNavigate, useParams } from 'react-router-dom';
+import Cropper, { Area } from 'react-easy-crop';
 import Counter from '../../../shared/components/Counter';
 import { HoldingsDonutPanel } from '../../../shared/components/HoldingsDonutPanel';
 import LightRays from '../../../shared/components/LightRays';
 import { PortfolioPerformanceChart } from '../../../shared/components/PortfolioPerformanceChart';
+import { resolveGroupPhotoUrl } from '../../../shared/utils/cloudinary';
+import { resolveUserPhotoUrl } from '../../../shared/utils/cloudinary';
+import { getCircularCroppedImageFile } from '../../../shared/utils/imageCrop';
 import { useAuth } from '../../auth/context/AuthContext';
 import {
   cancelGroupInvite,
@@ -17,6 +21,7 @@ import {
   GroupWorkspaceTransaction,
   GroupWorkspaceWatchlistItem,
   demoteGroupMember,
+  deleteGroup,
   getGroupMembers,
   getGroupProfile,
   getGroupRanking,
@@ -30,6 +35,7 @@ import {
   updateGroupMemberBudget,
   updateGroupName,
   updateGroupPhoto,
+  removeGroupPhoto,
 } from '../api/groupDetailApi';
 import { getStocksCurrentPrices, StockSearchItem, searchStocks } from '../../home/api/personalWorkspaceApi';
 import { getMySentGroupInvites, PeopleSearchResult, searchPeople } from '../../social/api/socialHubApi';
@@ -46,7 +52,7 @@ type PendingAction =
   | { kind: 'promote'; member: GroupMember }
   | { kind: 'demote'; member: GroupMember }
   | { kind: 'bulkBudget'; targetIds: number[]; amount: number; budgetAction: BudgetAction }
-  | { kind: 'updateGroup'; field: 'name' | 'description' | 'photo'; value: string | null };
+  | { kind: 'updateGroup'; field: 'name' | 'description'; value: string | null };
 
 function toNumber(value: string | null | undefined): number {
   if (!value) return 0;
@@ -64,9 +70,17 @@ function roleBadgeClass(role: string): string {
   return 'border-slate-500/30 bg-slate-600/10 text-slate-300';
 }
 
+function avatarFallback(name: string): string {
+  const clean = name.trim();
+  if (!clean) return '?';
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase();
+}
+
 export function GroupDetailPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const { groupId } = useParams();
   const groupContainerRef = useRef<HTMLElement | null>(null);
 
@@ -114,7 +128,18 @@ export function GroupDetailPage() {
 
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editPhotoUrl, setEditPhotoUrl] = useState('');
+  const [groupPhotoCropOpen, setGroupPhotoCropOpen] = useState(false);
+  const [selectedGroupPhotoSrc, setSelectedGroupPhotoSrc] = useState<string | null>(null);
+  const [selectedGroupPhotoName, setSelectedGroupPhotoName] = useState('group-photo.jpg');
+  const [groupPhotoCrop, setGroupPhotoCrop] = useState({ x: 0, y: 0 });
+  const [groupPhotoZoom, setGroupPhotoZoom] = useState(1);
+  const [groupPhotoCroppedAreaPixels, setGroupPhotoCroppedAreaPixels] = useState<Area | null>(null);
+  const groupPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const [deleteGroupConfirmOpen, setDeleteGroupConfirmOpen] = useState(false);
+  const [deleteGroupNameInput, setDeleteGroupNameInput] = useState('');
+  const [deleteGroupPhraseInput, setDeleteGroupPhraseInput] = useState('');
+  const [deleteGroupAcknowledge, setDeleteGroupAcknowledge] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState(false);
 
   const parsedGroupId = Number(groupId);
 
@@ -149,7 +174,6 @@ export function GroupDetailPage() {
 
     setEditName(profile.group.nome);
     setEditDescription(profile.group.descrizione ?? '');
-    setEditPhotoUrl(profile.group.photo_url ?? '');
 
     if (!user?.id_persona) {
       setCanAccessWorkspace(false);
@@ -194,6 +218,10 @@ export function GroupDetailPage() {
       return;
     }
 
+    void refreshProfile().catch(() => {
+      // Best effort refresh; group data loading continues even if auth refresh fails.
+    });
+
     let active = true;
 
     async function bootstrap() {
@@ -215,7 +243,7 @@ export function GroupDetailPage() {
     return () => {
       active = false;
     };
-  }, [parsedGroupId, user?.id_persona]);
+  }, [parsedGroupId, refreshProfile, user?.id_persona]);
 
   useEffect(() => {
     const ownRole = members.find((m) => m.id_persona === user?.id_persona)?.ruolo ?? null;
@@ -428,13 +456,13 @@ export function GroupDetailPage() {
   }, []);
 
   useEffect(() => {
-    if (!settingsOpen && !pendingAction) return;
+    if (!settingsOpen && !pendingAction && !groupPhotoCropOpen && !deleteGroupConfirmOpen) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [pendingAction, settingsOpen]);
+  }, [deleteGroupConfirmOpen, groupPhotoCropOpen, pendingAction, settingsOpen]);
 
   const totalWealth = workspaceHistory.length
     ? toNumber(workspaceHistory[workspaceHistory.length - 1].valore_totale)
@@ -475,8 +503,13 @@ export function GroupDetailPage() {
 
   const isOwner = groupRole === 'Owner';
   const isAdmin = groupRole === 'Admin' || isOwner;
+  const groupAvatar64 = resolveGroupPhotoUrl(group?.photo_url, 64);
+  const groupAvatar128 = resolveGroupPhotoUrl(group?.photo_url, 128);
+  const rankingAvatarRefreshKey = useMemo(() => Date.now(), [ranking]);
 
   const memberIdsSet = useMemo(() => new Set(members.map((m) => m.id_persona)), [members]);
+  const isDeleteGroupNameConfirmed = deleteGroupNameInput.trim() === (group?.nome ?? '');
+  const isDeleteGroupPhraseConfirmed = deleteGroupPhraseInput.trim() === 'DELETE GROUP';
 
   function toggleSelectMember(idPersona: number) {
     setSelectedMemberIds((prev) => (prev.includes(idPersona)
@@ -508,7 +541,7 @@ export function GroupDetailPage() {
     });
   }
 
-  function queueGroupUpdateConfirmation(field: 'name' | 'description' | 'photo') {
+  function queueGroupUpdateConfirmation(field: 'name' | 'description') {
     if (field === 'name') {
       const next = editName.trim();
       if (next.length < 3) {
@@ -523,8 +556,99 @@ export function GroupDetailPage() {
       setPendingAction({ kind: 'updateGroup', field, value: editDescription.trim() || null });
       return;
     }
+  }
 
-    setPendingAction({ kind: 'updateGroup', field, value: editPhotoUrl.trim() || null });
+  async function handleSelectGroupPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = '';
+
+    if (!file) return;
+
+    const isSupportedType = file.type === 'image/jpeg' || file.type === 'image/png';
+    if (!isSupportedType) {
+      setBanner('Only JPEG and PNG images are allowed.');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setBanner('Group image must be 2MB or smaller.');
+      return;
+    }
+
+    try {
+      const imageDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error('Unable to read selected image.'));
+        };
+        reader.onerror = () => reject(new Error('Unable to read selected image.'));
+        reader.readAsDataURL(file);
+      });
+
+      setSelectedGroupPhotoName(file.name || 'group-photo.jpg');
+      setSelectedGroupPhotoSrc(imageDataUrl);
+      setGroupPhotoCrop({ x: 0, y: 0 });
+      setGroupPhotoZoom(0.85);
+      setGroupPhotoCroppedAreaPixels(null);
+      setGroupPhotoCropOpen(true);
+      setBanner(null);
+    } catch {
+      setBanner('Unable to load selected image.');
+    }
+  }
+
+  function closeGroupPhotoCropModal() {
+    setGroupPhotoCropOpen(false);
+    setSelectedGroupPhotoSrc(null);
+    setGroupPhotoCrop({ x: 0, y: 0 });
+    setGroupPhotoZoom(0.85);
+    setGroupPhotoCroppedAreaPixels(null);
+  }
+
+  async function handleUploadGroupPhoto() {
+    if (!Number.isFinite(parsedGroupId)) return;
+
+    if (!selectedGroupPhotoSrc || !groupPhotoCroppedAreaPixels) {
+      setBanner('Select and crop an image before saving.');
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      const croppedFile = await getCircularCroppedImageFile(
+        selectedGroupPhotoSrc,
+        groupPhotoCroppedAreaPixels,
+        selectedGroupPhotoName,
+      );
+
+      const res = await updateGroupPhoto(parsedGroupId, croppedFile);
+      setBanner(res.message);
+      closeGroupPhotoCropModal();
+      await refreshAll(parsedGroupId);
+    } catch (err) {
+      setBanner(err instanceof Error ? err.message : 'Unable to update group photo.');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleRemoveGroupPhoto() {
+    if (!Number.isFinite(parsedGroupId) || !isOwner) return;
+
+    try {
+      setActionLoading(true);
+      const res = await removeGroupPhoto(parsedGroupId);
+      setBanner(res.message);
+      await refreshAll(parsedGroupId);
+    } catch (err) {
+      setBanner(err instanceof Error ? err.message : 'Unable to remove group photo.');
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   async function handleInviteMember(person: PeopleSearchResult) {
@@ -607,11 +731,8 @@ export function GroupDetailPage() {
         if (pendingAction.field === 'name') {
           const res = await updateGroupName(parsedGroupId, pendingAction.value ?? '');
           setBanner(res.message);
-        } else if (pendingAction.field === 'description') {
-          const res = await updateGroupDescription(parsedGroupId, pendingAction.value);
-          setBanner(res.message);
         } else {
-          const res = await updateGroupPhoto(parsedGroupId, pendingAction.value);
+          const res = await updateGroupDescription(parsedGroupId, pendingAction.value);
           setBanner(res.message);
         }
       } else {
@@ -642,6 +763,36 @@ export function GroupDetailPage() {
       setBanner(err instanceof Error ? err.message : 'Operation failed.');
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  function resetDeleteGroupFlow() {
+    setDeleteGroupConfirmOpen(false);
+    setDeleteGroupNameInput('');
+    setDeleteGroupPhraseInput('');
+    setDeleteGroupAcknowledge(false);
+    setDeletingGroup(false);
+  }
+
+  async function handleDeleteGroup() {
+    if (!Number.isFinite(parsedGroupId) || !isOwner) return;
+
+    if (!isDeleteGroupNameConfirmed || !deleteGroupAcknowledge || !isDeleteGroupPhraseConfirmed) {
+      setBanner('Complete all delete confirmations before deleting the group.');
+      return;
+    }
+
+    try {
+      setDeletingGroup(true);
+      const response = await deleteGroup(parsedGroupId);
+      resetDeleteGroupFlow();
+      setSettingsOpen(false);
+      setBanner(response.message);
+      navigate('/social');
+    } catch (err) {
+      setBanner(err instanceof Error ? err.message : 'Unable to delete group.');
+    } finally {
+      setDeletingGroup(false);
     }
   }
 
@@ -678,7 +829,7 @@ export function GroupDetailPage() {
 
           <div className="flex min-w-0 items-center gap-3 rounded-xl border border-[#25263a] bg-[#121422]/90 px-3 py-2">
             <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-violet-500/35 bg-[#1a1d2d] text-xs font-black text-violet-200">
-              {group?.photo_url ? <img src={group.photo_url} alt={group.nome} className="h-full w-full object-cover" /> : (group?.nome ?? 'G').slice(0, 2).toUpperCase()}
+              {groupAvatar64 ? <img src={groupAvatar64} alt={group?.nome ?? 'Group'} className="h-full w-full object-cover" /> : (group?.nome ?? 'G').slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-black text-slate-100">{group?.nome ?? `Group #${groupId}`}</p>
@@ -734,8 +885,21 @@ export function GroupDetailPage() {
                               </span>
                             </td>
                             <td className="px-6 py-4">
-                              <p className="font-bold text-slate-100">{member.username}</p>
-                              <p className="text-xs text-slate-500">ID {member.id_persona}</p>
+                              <div className="flex items-center gap-3">
+                                <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-[11px] font-black text-violet-200">
+                                  {resolveUserPhotoUrl(member.photo_url, 64) ? (
+                                    <img
+                                      src={`${resolveUserPhotoUrl(member.photo_url, 64)}${resolveUserPhotoUrl(member.photo_url, 64)?.includes('?') ? '&' : '?'}rk=${rankingAvatarRefreshKey}`}
+                                      alt={member.username}
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : avatarFallback(member.username)}
+                                </div>
+                                <div>
+                                  <p className="font-bold text-slate-100">{member.username}</p>
+                                  <p className="text-xs text-slate-500">ID {member.id_persona}</p>
+                                </div>
+                              </div>
                             </td>
                             <td className="px-6 py-4">
                               <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${roleBadgeClass(member.ruolo)}`}>{member.ruolo}</span>
@@ -1053,12 +1217,48 @@ export function GroupDetailPage() {
                   <div className="rounded-xl border border-[#24263a] bg-[#131522] p-4">
                     <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/80">Clan Details</p>
                     <div className="mt-3 flex items-center gap-4">
-                      <div className="grid h-16 w-16 place-items-center overflow-hidden rounded-full border border-violet-500/35 bg-[#1a1d2d] text-sm font-black text-violet-200">
-                        {group?.photo_url ? <img src={group.photo_url} alt={group.nome} className="h-full w-full object-cover" /> : (group?.nome ?? 'G').slice(0, 2).toUpperCase()}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isOwner) return;
+                          groupPhotoInputRef.current?.click();
+                        }}
+                        disabled={!isOwner}
+                        className="relative grid h-16 w-16 place-items-center rounded-full border border-violet-500/35 bg-[#1a1d2d] text-sm font-black text-violet-200 disabled:cursor-not-allowed disabled:opacity-90"
+                      >
+                        <span className="grid h-full w-full place-items-center overflow-hidden rounded-full">
+                          {groupAvatar128 ? <img src={groupAvatar128} alt={group?.nome ?? 'Group'} className="h-full w-full object-cover" /> : (group?.nome ?? 'G').slice(0, 2).toUpperCase()}
+                        </span>
+                        {isOwner ? (
+                          <span className="absolute -top-1 -right-1 grid h-8 w-8 place-items-center rounded-full border border-violet-200/70 bg-violet-500 text-white shadow-lg shadow-violet-500/40">
+                            <span className="material-symbols-outlined text-base">{groupAvatar128 ? 'autorenew' : 'add'}</span>
+                          </span>
+                        ) : null}
+                      </button>
+                      <input
+                        ref={groupPhotoInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={handleSelectGroupPhoto}
+                        className="hidden"
+                      />
                       <div>
                         <p className="text-lg font-black text-slate-100">{group?.nome}</p>
                         <p className="text-xs text-slate-400">{group?.descrizione || 'No group description available.'}</p>
+                        {isOwner ? (
+                          <>
+                            <p className="mt-1 text-[11px] text-slate-400">Click the icon to upload and crop group photo.</p>
+                            {groupAvatar128 ? (
+                              <button
+                                onClick={() => void handleRemoveGroupPhoto()}
+                                disabled={!isOwner || actionLoading}
+                                className="mt-2 text-xs text-rose-300 hover:underline disabled:opacity-60"
+                              >
+                                Remove group photo
+                              </button>
+                            ) : null}
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1078,7 +1278,7 @@ export function GroupDetailPage() {
                 {isAdmin ? (
                   <div className="rounded-xl border border-[#24263a] bg-[#131522] p-4">
                     <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/80">Group Profile Edit</p>
-                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                       <div className="rounded-lg border border-[#2a2c44] bg-[#141728] p-3">
                         <p className="text-[11px] uppercase tracking-wide text-slate-400">Name</p>
                         <input
@@ -1106,20 +1306,6 @@ export function GroupDetailPage() {
                           className="mt-2 w-full rounded-md border border-violet-500/35 bg-violet-500/12 px-2 py-1.5 text-xs font-bold uppercase text-violet-200"
                         >
                           Save description
-                        </button>
-                      </div>
-                      <div className="rounded-lg border border-[#2a2c44] bg-[#141728] p-3">
-                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Photo URL</p>
-                        <input
-                          value={editPhotoUrl}
-                          onChange={(e) => setEditPhotoUrl(e.target.value)}
-                          className="mt-2 w-full rounded-md border border-[#34375a] bg-[#0d1020] px-2 py-1.5 text-sm text-slate-100"
-                        />
-                        <button
-                          onClick={() => queueGroupUpdateConfirmation('photo')}
-                          className="mt-2 w-full rounded-md border border-violet-500/35 bg-violet-500/12 px-2 py-1.5 text-xs font-bold uppercase text-violet-200"
-                        >
-                          Save photo
                         </button>
                       </div>
                     </div>
@@ -1289,6 +1475,105 @@ export function GroupDetailPage() {
                     })}
                   </div>
                 </div>
+
+                {isOwner ? (
+                  <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 p-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-rose-300/90">Danger Zone</p>
+                    <p className="mt-2 text-xs text-rose-100/90">
+                      Deleting this group permanently removes group data (memberships, portfolios, transactions, holdings,
+                      invites and historical snapshots) through database cascades.
+                    </p>
+
+                    <div className="mt-3 space-y-3">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold uppercase tracking-wide text-rose-200/85">
+                          Type group name to continue
+                        </label>
+                        <input
+                          value={deleteGroupNameInput}
+                          onChange={(event) => setDeleteGroupNameInput(event.target.value)}
+                          placeholder={group?.nome ?? 'group name'}
+                          className="h-10 w-full rounded-lg border border-rose-400/35 bg-[#2a1016] px-3 text-sm text-rose-100 outline-none transition-all focus:border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+                        />
+                      </div>
+
+                      <label className="inline-flex items-center gap-2 text-xs text-rose-100/90">
+                        <input
+                          type="checkbox"
+                          checked={deleteGroupAcknowledge}
+                          onChange={(event) => setDeleteGroupAcknowledge(event.target.checked)}
+                          className="h-4 w-4 rounded border-rose-400/40 bg-[#2a1016]"
+                        />
+                        I understand this action is irreversible and deletes all group-related data.
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isDeleteGroupNameConfirmed || !deleteGroupAcknowledge) {
+                            setBanner('Confirm group name and acknowledgment before deleting group.');
+                            return;
+                          }
+                          setDeleteGroupPhraseInput('');
+                          setDeleteGroupConfirmOpen(true);
+                        }}
+                        disabled={!isDeleteGroupNameConfirmed || !deleteGroupAcknowledge || deletingGroup}
+                        className="rounded-lg bg-rose-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-rose-600 disabled:opacity-60"
+                      >
+                        Delete group
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteGroupConfirmOpen ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[111] flex items-center justify-center bg-black/75 px-5"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.98 }}
+              className="w-full max-w-lg rounded-2xl border border-rose-500/35 bg-[#11131f] p-5"
+            >
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-rose-300/90">Final confirmation</p>
+              <p className="mt-3 text-sm text-slate-200">
+                Type <span className="font-bold text-rose-300">DELETE GROUP</span> to confirm permanent deletion of
+                this group and all linked data.
+              </p>
+
+              <input
+                value={deleteGroupPhraseInput}
+                onChange={(event) => setDeleteGroupPhraseInput(event.target.value)}
+                placeholder="DELETE GROUP"
+                className="mt-4 h-10 w-full rounded-lg border border-rose-400/35 bg-[#2a1016] px-3 text-sm text-rose-100 outline-none transition-all focus:border-rose-400 focus:ring-2 focus:ring-rose-400/20"
+              />
+
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => void handleDeleteGroup()}
+                  disabled={deletingGroup || !isDeleteGroupPhraseConfirmed}
+                  className="rounded-lg bg-rose-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-rose-600 disabled:opacity-60"
+                >
+                  {deletingGroup ? 'Deleting...' : 'Delete group permanently'}
+                </button>
+                <button
+                  onClick={() => setDeleteGroupConfirmOpen(false)}
+                  disabled={deletingGroup}
+                  className="rounded-lg border border-[#2a2a39] bg-[#161824] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-colors hover:bg-[#1e2030] disabled:opacity-60"
+                >
+                  Cancel
+                </button>
               </div>
             </motion.div>
           </motion.div>
@@ -1314,6 +1599,79 @@ export function GroupDetailPage() {
                 <span className="material-symbols-outlined text-[14px]">close</span>
               </button>
             </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {groupPhotoCropOpen && selectedGroupPhotoSrc ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[109] flex items-center justify-center bg-black/80 p-6"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 14, scale: 0.97 }}
+              transition={{ duration: 0.24, ease: 'easeInOut' }}
+              className="w-full max-w-xl rounded-2xl border border-violet-400/35 bg-[#111118] p-5 shadow-2xl shadow-violet-900/25"
+            >
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Edit group photo</p>
+              <p className="mt-2 text-sm text-slate-300">Drag and zoom to align your group image inside the circular frame.</p>
+
+              <div className="relative mt-4 h-[320px] overflow-hidden rounded-2xl border border-[#2a2a39] bg-[#0f0f14]">
+                <Cropper
+                  image={selectedGroupPhotoSrc}
+                  crop={groupPhotoCrop}
+                  zoom={groupPhotoZoom}
+                  minZoom={0.35}
+                  maxZoom={4}
+                  restrictPosition={false}
+                  objectFit="contain"
+                  aspect={1}
+                  cropShape="round"
+                  showGrid={false}
+                  onCropChange={setGroupPhotoCrop}
+                  onZoomChange={setGroupPhotoZoom}
+                  onCropComplete={(_, croppedAreaPixels) => setGroupPhotoCroppedAreaPixels(croppedAreaPixels)}
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Zoom</label>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={4}
+                  step={0.01}
+                  value={groupPhotoZoom}
+                  onChange={(event) => setGroupPhotoZoom(Number(event.target.value))}
+                  className="mt-2 w-full accent-violet-500"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeGroupPhotoCropModal}
+                  disabled={actionLoading}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleUploadGroupPhoto()}
+                  disabled={actionLoading}
+                  className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                >
+                  {actionLoading ? 'Saving...' : 'Save photo'}
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -1366,7 +1724,7 @@ export function GroupDetailPage() {
               ) : null}
               {pendingAction.kind === 'updateGroup' ? (
                 <p className="mt-3 text-sm text-slate-200">
-                  Do you confirm updating {pendingAction.field === 'name' ? 'name' : pendingAction.field === 'description' ? 'description' : 'group photo'}?
+                  Do you confirm updating {pendingAction.field === 'name' ? 'name' : 'description'}?
                 </p>
               ) : null}
 

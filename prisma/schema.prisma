@@ -20,6 +20,7 @@ model Persona {
   username_changed_at DateTime? @db.Timestamp(3)
   photo_url   String?  @db.VarChar(255)
   is_banned   Boolean  @default(false)
+  is_deleted  Boolean  @default(false)
   is_superuser Boolean @default(false)
 
   credenziali     Credenziali?

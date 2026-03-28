@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { gsap } from 'gsap';
 import { useLocation, useNavigate } from 'react-router-dom';
+import Cropper, { Area } from 'react-easy-crop';
 import { useAuth } from '../../auth/context/AuthContext';
 import {
   changeMyEmail,
   changeMyPassword,
-  changeMyPhoto,
   changeMyUsername,
   deleteUserAccount,
   setAccessToken,
+  uploadMyPhoto,
+  removeMyPhoto,
 } from '../../auth/api/authApi';
 import {
   FriendshipRow,
@@ -34,7 +36,9 @@ import {
   searchPeople,
   sendFriendRequest,
 } from '../api/socialHubApi';
-import { getGroupRanking } from '../../groups/api/groupDetailApi';
+import { getGroupRanking, updateGroupPhoto } from '../../groups/api/groupDetailApi';
+import { resolveUserPhotoUrl } from '../../../shared/utils/cloudinary';
+import { getCircularCroppedImageFile } from '../../../shared/utils/imageCrop';
 
 type SearchMode = 'users' | 'groups';
 type FriendRelationState = 'self' | 'friend' | 'incoming' | 'outgoing' | 'none';
@@ -48,7 +52,6 @@ interface InviteCandidate extends PeopleSearchResult {
 interface CreateGroupForm {
   nome: string;
   privacy: GroupPrivacy;
-  photoUrl: string;
   descrizione: string;
   budgetIniziale: string;
 }
@@ -56,7 +59,6 @@ interface CreateGroupForm {
 interface AccountForm {
   username: string;
   email: string;
-  photoUrl: string;
   oldPassword: string;
   newPassword: string;
   confirmNewPassword: string;
@@ -119,7 +121,7 @@ export function SocialHubPage() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [peopleResults, setPeopleResults] = useState<PeopleSearchResult[]>([]);
   const [groupResults, setGroupResults] = useState<GroupSummary[]>([]);
-  const [groupRankingPreviewById, setGroupRankingPreviewById] = useState<Record<number, Array<{ username: string; value: string }>>>({});
+  const [groupRankingPreviewById, setGroupRankingPreviewById] = useState<Record<number, Array<{ username: string; value: string; photo_url?: string | null }>>>({});
 
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [invitesOpen, setInvitesOpen] = useState(false);
@@ -139,10 +141,17 @@ export function SocialHubPage() {
   const [createForm, setCreateForm] = useState<CreateGroupForm>({
     nome: '',
     privacy: 'Private',
-    photoUrl: '',
     descrizione: '',
     budgetIniziale: '0',
   });
+  const [groupCropOpen, setGroupCropOpen] = useState(false);
+  const [selectedGroupPhotoSrc, setSelectedGroupPhotoSrc] = useState<string | null>(null);
+  const [selectedGroupPhotoName, setSelectedGroupPhotoName] = useState('group-photo.jpg');
+  const [groupCrop, setGroupCrop] = useState({ x: 0, y: 0 });
+  const [groupZoom, setGroupZoom] = useState(1);
+  const [groupCroppedAreaPixels, setGroupCroppedAreaPixels] = useState<Area | null>(null);
+  const [croppedGroupPhotoFile, setCroppedGroupPhotoFile] = useState<File | null>(null);
+  const [croppedGroupPhotoPreviewDataUrl, setCroppedGroupPhotoPreviewDataUrl] = useState<string | null>(null);
 
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountBusyAction, setAccountBusyAction] = useState<'username' | 'email' | 'photo' | 'password' | null>(null);
@@ -157,19 +166,26 @@ export function SocialHubPage() {
   const [accountForm, setAccountForm] = useState<AccountForm>({
     username: '',
     email: '',
-    photoUrl: '',
     oldPassword: '',
     newPassword: '',
     confirmNewPassword: '',
   });
+  const [profileCropOpen, setProfileCropOpen] = useState(false);
+  const [selectedProfilePhotoSrc, setSelectedProfilePhotoSrc] = useState<string | null>(null);
+  const [profileCrop, setProfileCrop] = useState({ x: 0, y: 0 });
+  const [profileZoom, setProfileZoom] = useState(1);
+  const [profileCroppedAreaPixels, setProfileCroppedAreaPixels] = useState<Area | null>(null);
+  const [selectedProfilePhotoName, setSelectedProfilePhotoName] = useState('profile-photo.jpg');
 
-  const photoUrlInputRef = useRef<HTMLInputElement | null>(null);
-  const accountPhotoUrlInputRef = useRef<HTMLInputElement | null>(null);
+  const createGroupPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const socialContainerRef = useRef<HTMLElement | null>(null);
   const requestsButtonRef = useRef<HTMLButtonElement | null>(null);
   const invitesButtonRef = useRef<HTMLButtonElement | null>(null);
   const requestsPanelRef = useRef<HTMLDivElement | null>(null);
   const invitesPanelRef = useRef<HTMLDivElement | null>(null);
+  const userAvatar96 = resolveUserPhotoUrl(user?.photo_url, 96);
+  const rankingAvatarRefreshKey = useMemo(() => Date.now(), [groupRankingPreviewById]);
 
   const refreshData = useCallback(async () => {
     const [friendshipsRes, myGroupsRes, invitesRes, sentInvitesRes] = await Promise.all([
@@ -270,6 +286,7 @@ export function SocialHubPage() {
             top: ranking.ranking.slice(0, 4).map((row) => ({
               username: row.username,
               value: toCompactCurrency(Number(row.valore_totale)),
+              photo_url: row.photo_url,
             })),
           };
         }),
@@ -277,7 +294,7 @@ export function SocialHubPage() {
 
       if (!active) return;
 
-      const next: Record<number, Array<{ username: string; value: string }>> = {};
+      const next: Record<number, Array<{ username: string; value: string; photo_url?: string | null }>> = {};
       for (const row of results) {
         if (row.status === 'fulfilled') {
           next[row.value.id] = row.value.top;
@@ -328,7 +345,7 @@ export function SocialHubPage() {
   }, [createModalOpen, inviteSearchTerm]);
 
   useEffect(() => {
-    if (!blockingTarget && !createModalOpen && !accountModalOpen && !deleteConfirmationOpen) return;
+    if (!blockingTarget && !createModalOpen && !accountModalOpen && !deleteConfirmationOpen && !profileCropOpen && !groupCropOpen) return;
 
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -336,7 +353,7 @@ export function SocialHubPage() {
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [blockingTarget, createModalOpen, accountModalOpen, deleteConfirmationOpen]);
+  }, [blockingTarget, createModalOpen, accountModalOpen, deleteConfirmationOpen, profileCropOpen, groupCropOpen]);
 
   useEffect(() => {
     if (!banner && !loadingError) return;
@@ -387,7 +404,6 @@ export function SocialHubPage() {
       setAccountForm({
         username: user?.username ?? '',
         email: user?.email ?? '',
-        photoUrl: user?.photo_url ?? '',
         oldPassword: '',
         newPassword: '',
         confirmNewPassword: '',
@@ -573,10 +589,17 @@ export function SocialHubPage() {
     setInviteSearchTerm('');
     setInviteSearchResults([]);
     setSelectedInvitees([]);
+    setGroupCropOpen(false);
+    setSelectedGroupPhotoSrc(null);
+    setSelectedGroupPhotoName('group-photo.jpg');
+    setGroupCrop({ x: 0, y: 0 });
+    setGroupZoom(0.85);
+    setGroupCroppedAreaPixels(null);
+    setCroppedGroupPhotoFile(null);
+    setCroppedGroupPhotoPreviewDataUrl(null);
     setCreateForm({
       nome: '',
       privacy: 'Private',
-      photoUrl: '',
       descrizione: '',
       budgetIniziale: '0',
     });
@@ -608,12 +631,19 @@ export function SocialHubPage() {
       const created = await createGroup({
         nome: groupName,
         privacy: createForm.privacy,
-        photo_url: createForm.photoUrl.trim() || undefined,
         descrizione: createForm.descrizione.trim() || undefined,
         budget_iniziale: budget.toFixed(2),
       });
 
       const groupId = created.group.id_gruppo;
+
+      if (croppedGroupPhotoFile) {
+        try {
+          await updateGroupPhoto(groupId, croppedGroupPhotoFile);
+        } catch {
+          setBanner('Group created, but photo upload failed. You can retry from group settings.');
+        }
+      }
 
       if (selectedInvitees.length > 0) {
         const inviteResults = await Promise.allSettled(
@@ -633,6 +663,91 @@ export function SocialHubPage() {
       setCreateError(err instanceof Error ? err.message : 'Unable to create group.');
     } finally {
       setCreatingGroup(false);
+    }
+  }
+
+  async function handleSelectCreateGroupPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = '';
+
+    if (!file) return;
+
+    const isSupportedType = file.type === 'image/jpeg' || file.type === 'image/png';
+    if (!isSupportedType) {
+      setCreateError('Only JPEG and PNG images are allowed.');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setCreateError('Group image must be 2MB or smaller.');
+      return;
+    }
+
+    try {
+      const imageDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error('Unable to read selected image.'));
+        };
+        reader.onerror = () => reject(new Error('Unable to read selected image.'));
+        reader.readAsDataURL(file);
+      });
+
+      setCreateError(null);
+      setSelectedGroupPhotoName(file.name || 'group-photo.jpg');
+      setSelectedGroupPhotoSrc(imageDataUrl);
+      setGroupCrop({ x: 0, y: 0 });
+      setGroupZoom(0.85);
+      setGroupCroppedAreaPixels(null);
+      setGroupCropOpen(true);
+    } catch {
+      setCreateError('Unable to load selected image.');
+    }
+  }
+
+  function closeCreateGroupCropModal() {
+    setGroupCropOpen(false);
+    setSelectedGroupPhotoSrc(null);
+    setGroupCrop({ x: 0, y: 0 });
+    setGroupZoom(0.85);
+    setGroupCroppedAreaPixels(null);
+  }
+
+  async function handleSaveCreateGroupPhotoCrop() {
+    if (!selectedGroupPhotoSrc || !groupCroppedAreaPixels) {
+      setCreateError('Select and crop an image before saving.');
+      return;
+    }
+
+    try {
+      const croppedFile = await getCircularCroppedImageFile(
+        selectedGroupPhotoSrc,
+        groupCroppedAreaPixels,
+        selectedGroupPhotoName,
+      );
+
+      const previewDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error('Unable to read cropped image.'));
+        };
+        reader.onerror = () => reject(new Error('Unable to read cropped image.'));
+        reader.readAsDataURL(croppedFile);
+      });
+
+      setCroppedGroupPhotoFile(croppedFile);
+      setCroppedGroupPhotoPreviewDataUrl(previewDataUrl);
+      closeCreateGroupCropModal();
+    } catch {
+      setCreateError('Unable to crop selected image.');
     }
   }
 
@@ -657,12 +772,77 @@ export function SocialHubPage() {
     }
   }
 
-  async function handleUpdatePhoto() {
+  async function handleSelectProfilePhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = '';
+
+    if (!file) return;
+
+    const isSupportedType = file.type === 'image/jpeg' || file.type === 'image/png';
+    if (!isSupportedType) {
+      setAccountError('Only JPEG and PNG images are allowed.');
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setAccountError('Profile image must be 2MB or smaller.');
+      return;
+    }
+
+    try {
+      const imageDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error('Unable to read selected image.'));
+        };
+        reader.onerror = () => reject(new Error('Unable to read selected image.'));
+        reader.readAsDataURL(file);
+      });
+
+      setAccountError(null);
+      setAccountSuccess(null);
+      setSelectedProfilePhotoName(file.name || 'profile-photo.jpg');
+      setSelectedProfilePhotoSrc(imageDataUrl);
+      setProfileCrop({ x: 0, y: 0 });
+      setProfileZoom(0.85);
+      setProfileCroppedAreaPixels(null);
+      setProfileCropOpen(true);
+    } catch {
+      setAccountError('Unable to load selected image.');
+    }
+  }
+
+  function closeProfileCropModal() {
+    setSelectedProfilePhotoSrc(null);
+    setProfileCropOpen(false);
+    setProfileCrop({ x: 0, y: 0 });
+    setProfileZoom(0.85);
+    setProfileCroppedAreaPixels(null);
+  }
+
+  async function handleUploadCroppedPhoto() {
+    if (!selectedProfilePhotoSrc || !profileCroppedAreaPixels) {
+      setAccountError('Select and crop an image before saving.');
+      return;
+    }
+
     try {
       setAccountBusyAction('photo');
       setAccountError(null);
-      await changeMyPhoto(accountForm.photoUrl.trim() || null);
+
+      const croppedFile = await getCircularCroppedImageFile(
+        selectedProfilePhotoSrc,
+        profileCroppedAreaPixels,
+        selectedProfilePhotoName,
+      );
+
+      await uploadMyPhoto(croppedFile);
       await refreshProfile();
+      closeProfileCropModal();
       setAccountSuccess('Profile photo updated successfully.');
     } catch (err) {
       setAccountError(err instanceof Error ? err.message : 'Unable to update profile photo.');
@@ -926,14 +1106,9 @@ export function SocialHubPage() {
               ) : null}
             </button>
 
-            <AnimatePresence>
-              {requestsOpen ? (
-                <motion.div
+            {requestsOpen ? (
+                <div
                   ref={requestsPanelRef}
-                  initial={{ opacity: 0, y: -10, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10, scale: 0.98 }}
-                  transition={{ duration: 0.22, ease: 'easeInOut' }}
                   className="social-glow-card social-overlay-panel absolute right-0 top-[calc(100%+8px)] z-50 w-[360px] rounded-2xl border border-violet-500/30 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -956,7 +1131,7 @@ export function SocialHubPage() {
                           <div key={`incoming-${req.id_persona}`} className="rounded-xl border border-[#232337] bg-[#13131a] p-3">
                             <div className="flex items-center gap-3">
                               <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-xs font-black text-violet-200">
-                                {req.photo_url ? <img src={req.photo_url} alt={req.username} className="h-full w-full object-cover" /> : avatarFallback(req.username)}
+                                {resolveUserPhotoUrl(req.photo_url, 64) ? <img src={resolveUserPhotoUrl(req.photo_url, 64) ?? ''} alt={req.username} className="h-full w-full object-cover" /> : avatarFallback(req.username)}
                               </div>
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-bold text-slate-100">{req.username}</p>
@@ -1001,7 +1176,7 @@ export function SocialHubPage() {
                             <div className="flex items-center justify-between gap-3">
                               <div className="flex items-center gap-3">
                                 <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-xs font-black text-violet-200">
-                                  {req.photo_url ? <img src={req.photo_url} alt={req.username} className="h-full w-full object-cover" /> : avatarFallback(req.username)}
+                                  {resolveUserPhotoUrl(req.photo_url, 64) ? <img src={resolveUserPhotoUrl(req.photo_url, 64) ?? ''} alt={req.username} className="h-full w-full object-cover" /> : avatarFallback(req.username)}
                                 </div>
                                 <div className="min-w-0">
                                   <p className="truncate text-sm font-bold text-slate-100">{req.username}</p>
@@ -1024,18 +1199,12 @@ export function SocialHubPage() {
                       )}
                     </div>
                   </div>
-                </motion.div>
+                </div>
               ) : null}
-            </AnimatePresence>
 
-            <AnimatePresence>
-              {invitesOpen ? (
-                <motion.div
+            {invitesOpen ? (
+                <div
                   ref={invitesPanelRef}
-                  initial={{ opacity: 0, y: -10, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10, scale: 0.98 }}
-                  transition={{ duration: 0.22, ease: 'easeInOut' }}
                   className="social-glow-card social-overlay-panel absolute right-0 top-[calc(100%+8px)] z-50 w-[380px] rounded-2xl border border-violet-500/30 bg-[#0f0f14] p-4 shadow-2xl shadow-black/40"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -1114,9 +1283,8 @@ export function SocialHubPage() {
                       )}
                     </div>
                   </div>
-                </motion.div>
+                </div>
               ) : null}
-            </AnimatePresence>
           </div>
         </div>
 
@@ -1136,7 +1304,7 @@ export function SocialHubPage() {
                       <div key={person.id_persona} className="flex items-center justify-between rounded-xl border border-[#232337] bg-[#13131a] p-3">
                         <div className="flex items-center gap-3">
                           <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-xs font-black text-violet-200">
-                            {person.photo_url ? <img src={person.photo_url} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
+                            {resolveUserPhotoUrl(person.photo_url, 64) ? <img src={resolveUserPhotoUrl(person.photo_url, 64) ?? ''} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
                           </div>
                           <div>
                             <p className="text-sm font-bold text-slate-100">{person.username}</p>
@@ -1234,7 +1402,7 @@ export function SocialHubPage() {
                   <article key={friend.id_persona} className="social-glow-card group flex items-center justify-between rounded-xl border border-[#1f1f2e] bg-[#13131a] p-4 transition-all duration-300 hover:border-violet-500/30">
                     <div className="flex items-center gap-3">
                       <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-xs font-black text-violet-200">
-                        {friend.photo_url ? <img src={friend.photo_url} alt={friend.username} className="h-full w-full object-cover" /> : avatarFallback(friend.username)}
+                        {resolveUserPhotoUrl(friend.photo_url, 64) ? <img src={resolveUserPhotoUrl(friend.photo_url, 64) ?? ''} alt={friend.username} className="h-full w-full object-cover" /> : avatarFallback(friend.username)}
                       </div>
                       <div>
                         <h3 className="font-bold text-slate-100">{friend.username}</h3>
@@ -1283,6 +1451,15 @@ export function SocialHubPage() {
                           <div key={`${group.id_gruppo}-${row.username}-${index}`} className="flex items-center justify-between text-sm text-canvas/80">
                             <span className="inline-flex items-center gap-2 truncate">
                               <span className="text-[10px] font-black text-canvas/45">{String(index + 1).padStart(2, '0')}</span>
+                              <span className="grid h-6 w-6 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-[9px] font-black text-violet-200">
+                                {resolveUserPhotoUrl(row.photo_url ?? null, 48) ? (
+                                  <img
+                                    src={`${resolveUserPhotoUrl(row.photo_url ?? null, 48)}${resolveUserPhotoUrl(row.photo_url ?? null, 48)?.includes('?') ? '&' : '?'}rk=${rankingAvatarRefreshKey}`}
+                                    alt={row.username}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : avatarFallback(row.username)}
+                              </span>
                               <span className="truncate">{row.username}</span>
                             </span>
                             <span className="text-xs font-bold text-emerald-300">{row.value}</span>
@@ -1353,18 +1530,28 @@ export function SocialHubPage() {
 
                   <div className="flex flex-col items-center">
                     <button
-                      onClick={() => photoUrlInputRef.current?.focus()}
-                      className="relative grid h-20 w-20 place-items-center overflow-hidden rounded-full border-2 border-violet-500/40 bg-[#1a1a27] text-violet-200 transition-all duration-300 hover:border-violet-400"
+                      type="button"
+                      onClick={() => createGroupPhotoInputRef.current?.click()}
+                      className="relative grid h-20 w-20 place-items-center rounded-full border-2 border-violet-500/40 bg-[#1a1a27] text-violet-200 transition-all duration-300 hover:border-violet-400"
                     >
-                      {createForm.photoUrl.trim() ? (
-                        <img src={createForm.photoUrl} alt="Group" className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="material-symbols-outlined text-3xl">groups</span>
-                      )}
-                      <span className="absolute bottom-0 right-0 grid h-7 w-7 place-items-center rounded-full border border-violet-300/60 bg-violet-500 text-white shadow-lg shadow-violet-500/30">
-                        <span className="material-symbols-outlined text-base">add</span>
+                      <span className="grid h-full w-full place-items-center overflow-hidden rounded-full">
+                        {croppedGroupPhotoPreviewDataUrl ? (
+                          <img src={croppedGroupPhotoPreviewDataUrl} alt="Group" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="material-symbols-outlined text-3xl">groups</span>
+                        )}
+                      </span>
+                      <span className="absolute -top-1 -right-1 grid h-8 w-8 place-items-center rounded-full border border-violet-200/70 bg-violet-500 text-white shadow-lg shadow-violet-500/40">
+                        <span className="material-symbols-outlined text-base">{croppedGroupPhotoPreviewDataUrl ? 'autorenew' : 'add'}</span>
                       </span>
                     </button>
+                    <input
+                      ref={createGroupPhotoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      onChange={handleSelectCreateGroupPhoto}
+                      className="hidden"
+                    />
                     <p className="mt-3 text-xs uppercase tracking-[0.18em] text-violet-300/85">Create New Group</p>
                   </div>
 
@@ -1378,17 +1565,6 @@ export function SocialHubPage() {
                       value={createForm.nome}
                       onChange={(e) => setCreateForm((prev) => ({ ...prev, nome: e.target.value }))}
                       placeholder="Enter group name"
-                      className="h-11 w-full rounded-xl border border-[#2a2a39] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
-                    />
-                  </div>
-
-                  <div className="space-y-2 md:col-span-2">
-                    <label className="text-xs font-bold uppercase tracking-wide text-slate-400">Photo URL (optional)</label>
-                    <input
-                      ref={photoUrlInputRef}
-                      value={createForm.photoUrl}
-                      onChange={(e) => setCreateForm((prev) => ({ ...prev, photoUrl: e.target.value }))}
-                      placeholder="https://example.com/group.jpg"
                       className="h-11 w-full rounded-xl border border-[#2a2a39] bg-[#13131a] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/25"
                     />
                   </div>
@@ -1496,7 +1672,7 @@ export function SocialHubPage() {
                           >
                             <div className="flex items-center gap-3">
                               <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-[11px] font-black text-violet-200">
-                                {person.photo_url ? <img src={person.photo_url} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
+                                {resolveUserPhotoUrl(person.photo_url, 64) ? <img src={resolveUserPhotoUrl(person.photo_url, 64) ?? ''} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
                               </div>
                               <div>
                                 <span className="text-sm font-semibold text-slate-100">{person.username}</span>
@@ -1553,6 +1729,77 @@ export function SocialHubPage() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {groupCropOpen && selectedGroupPhotoSrc ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 p-6"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 14, scale: 0.97 }}
+              transition={{ duration: 0.24, ease: 'easeInOut' }}
+              className="w-full max-w-xl rounded-2xl border border-violet-400/35 bg-[#111118] p-5 shadow-2xl shadow-violet-900/25"
+            >
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Edit group photo</p>
+              <p className="mt-2 text-sm text-slate-300">Drag and zoom to align the group image inside the circular frame.</p>
+
+              <div className="relative mt-4 h-[320px] overflow-hidden rounded-2xl border border-[#2a2a39] bg-[#0f0f14]">
+                <Cropper
+                  image={selectedGroupPhotoSrc}
+                  crop={groupCrop}
+                  zoom={groupZoom}
+                  minZoom={0.35}
+                  maxZoom={4}
+                  restrictPosition={false}
+                  objectFit="contain"
+                  aspect={1}
+                  cropShape="round"
+                  showGrid={false}
+                  onCropChange={setGroupCrop}
+                  onZoomChange={setGroupZoom}
+                  onCropComplete={(_, croppedAreaPixels) => setGroupCroppedAreaPixels(croppedAreaPixels)}
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Zoom</label>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={4}
+                  step={0.01}
+                  value={groupZoom}
+                  onChange={(event) => setGroupZoom(Number(event.target.value))}
+                  className="mt-2 w-full accent-violet-500"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeCreateGroupCropModal}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveCreateGroupPhotoCrop()}
+                  className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600"
+                >
+                  Save photo
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {accountModalOpen ? (
           <motion.div
             initial={{ opacity: 0 }}
@@ -1584,22 +1831,29 @@ export function SocialHubPage() {
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                   <div className="rounded-2xl border border-[#2a2a39] bg-[#13131a] p-4">
                     <button
-                      onClick={() => accountPhotoUrlInputRef.current?.focus()}
-                      className="relative mx-auto grid h-24 w-24 place-items-center overflow-hidden rounded-full border-2 border-violet-500/40 bg-[#1a1a27] text-violet-200"
+                      onClick={() => profilePhotoInputRef.current?.click()}
+                      className="relative mx-auto grid h-24 w-24 place-items-center rounded-full border-2 border-violet-500/40 bg-[#1a1a27] text-violet-200 transition-all hover:border-violet-300"
                     >
-                      {accountForm.photoUrl.trim() ? (
-                        <img src={accountForm.photoUrl} alt={accountForm.username || 'User'} className="h-full w-full object-cover" />
-                      ) : user?.photo_url ? (
-                        <img src={user.photo_url} alt={user.username} className="h-full w-full object-cover" />
+                      <span className="grid h-full w-full place-items-center overflow-hidden rounded-full">
+                      {userAvatar96 ? (
+                        <img src={userAvatar96} alt={user?.username ?? 'User'} className="h-full w-full object-cover" />
                       ) : (
                         <span className="material-symbols-outlined text-4xl">person</span>
                       )}
-                      <span className="absolute bottom-0 right-0 grid h-7 w-7 place-items-center rounded-full border border-violet-300/60 bg-violet-500 text-white shadow-lg shadow-violet-500/30">
-                        <span className="material-symbols-outlined text-base">add</span>
+                      </span>
+                      <span className="absolute -top-1 -right-1 grid h-8 w-8 place-items-center rounded-full border border-violet-200/70 bg-violet-500 text-white shadow-lg shadow-violet-500/40">
+                        <span className="material-symbols-outlined text-base">{userAvatar96 ? 'autorenew' : 'add'}</span>
                       </span>
                     </button>
+                    <input
+                      ref={profilePhotoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      onChange={handleSelectProfilePhoto}
+                      className="hidden"
+                    />
                     <h3 className="mt-3 text-center text-lg font-bold text-slate-100">{user?.username}</h3>
-                    <p className="mt-1 text-center text-xs text-slate-400">Manage credentials, profile photo, and account security.</p>
+                    <p className="mt-1 text-center text-xs text-slate-400">Click the avatar to upload and crop your profile photo.</p>
                     <div className="mt-4 space-y-2 border-t border-[#232337] pt-3 text-xs text-slate-300">
                       <div className="flex items-center justify-between">
                         <span>Friends</span>
@@ -1614,12 +1868,36 @@ export function SocialHubPage() {
                         <span className="font-bold text-violet-200">{groupInvites.length}</span>
                       </div>
                     </div>
+                    {userAvatar96 ? (
+                      <div className="mt-3 text-center">
+                        <button
+                          onClick={async () => {
+                            if (!user) return;
+                            try {
+                              setAccountBusyAction('photo');
+                              setAccountError(null);
+                              const res = await removeMyPhoto();
+                              await refreshProfile();
+                              setAccountSuccess(res.message);
+                            } catch (err) {
+                              setAccountError(err instanceof Error ? err.message : 'Unable to remove profile photo.');
+                            } finally {
+                              setAccountBusyAction(null);
+                            }
+                          }}
+                          disabled={accountBusyAction !== null}
+                          className="mt-2 text-xs text-rose-300 hover:underline disabled:opacity-60"
+                        >
+                          Remove profile photo
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-4 lg:col-span-2">
                     <div className="rounded-2xl border border-[#2a2a39] bg-[#13131a] p-4">
                       <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Public profile</p>
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div className="space-y-2">
                           <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Username</label>
                           <input
@@ -1649,23 +1927,6 @@ export function SocialHubPage() {
                             className="rounded-lg bg-sky-500/80 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-sky-500 disabled:opacity-70"
                           >
                             {accountBusyAction === 'email' ? 'Updating...' : 'Update email'}
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Photo URL</label>
-                          <input
-                            ref={accountPhotoUrlInputRef}
-                            value={accountForm.photoUrl}
-                            onChange={(e) => setAccountForm((prev) => ({ ...prev, photoUrl: e.target.value }))}
-                            placeholder="https://example.com/avatar.jpg"
-                            className="h-10 w-full rounded-lg border border-[#2a2a39] bg-[#101019] px-3 text-sm text-slate-100 outline-none transition-all focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
-                          />
-                          <button
-                            onClick={() => void handleUpdatePhoto()}
-                            disabled={accountBusyAction !== null}
-                            className="rounded-lg border border-violet-500/35 bg-violet-500/10 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-violet-200 transition-all duration-300 hover:bg-violet-500/20 disabled:opacity-70"
-                          >
-                            {accountBusyAction === 'photo' ? 'Saving...' : 'Update photo'}
                           </button>
                         </div>
                       </div>
@@ -1778,6 +2039,79 @@ export function SocialHubPage() {
                     ) : null}
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {profileCropOpen && selectedProfilePhotoSrc ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 p-6"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 14, scale: 0.97 }}
+              transition={{ duration: 0.24, ease: 'easeInOut' }}
+              className="w-full max-w-xl rounded-2xl border border-violet-400/35 bg-[#111118] p-5 shadow-2xl shadow-violet-900/25"
+            >
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300/85">Edit profile photo</p>
+              <p className="mt-2 text-sm text-slate-300">Drag and zoom to align your photo inside the circular frame.</p>
+
+              <div className="relative mt-4 h-[320px] overflow-hidden rounded-2xl border border-[#2a2a39] bg-[#0f0f14]">
+                <Cropper
+                  image={selectedProfilePhotoSrc}
+                  crop={profileCrop}
+                  zoom={profileZoom}
+                  minZoom={0.35}
+                  maxZoom={4}
+                  restrictPosition={false}
+                  objectFit="contain"
+                  aspect={1}
+                  cropShape="round"
+                  showGrid={false}
+                  onCropChange={setProfileCrop}
+                  onZoomChange={setProfileZoom}
+                  onCropComplete={(_, croppedAreaPixels) => setProfileCroppedAreaPixels(croppedAreaPixels)}
+                />
+              </div>
+
+              <div className="mt-4">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Zoom</label>
+                <input
+                  type="range"
+                  min={0.35}
+                  max={4}
+                  step={0.01}
+                  value={profileZoom}
+                  onChange={(event) => setProfileZoom(Number(event.target.value))}
+                  className="mt-2 w-full accent-violet-500"
+                />
+              </div>
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeProfileCropModal}
+                  disabled={accountBusyAction === 'photo'}
+                  className="rounded-lg border border-[#2a2a39] bg-[#13131a] px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200 transition-all duration-300 hover:bg-[#1b1b27] disabled:opacity-70"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleUploadCroppedPhoto()}
+                  disabled={accountBusyAction === 'photo'}
+                  className="rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white transition-all duration-300 hover:bg-violet-600 disabled:opacity-70"
+                >
+                  {accountBusyAction === 'photo' ? 'Saving...' : 'Save photo'}
+                </button>
               </div>
             </motion.div>
           </motion.div>

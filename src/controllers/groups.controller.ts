@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { z } from 'zod';
+import { resolveStoredProfilePhotoUrl, uploadGroupImage } from '../lib/cloudinary';
 import { prisma } from '../lib/prisma';
 import { AuthRequest } from '../types';
 
@@ -70,10 +71,6 @@ const UpdateGroupDescriptionSchema = z.object({
   descrizione: z.string().trim().max(1000).optional(),
 });
 
-const UpdateGroupPhotoSchema = z.object({
-  photo_url: z.string().trim().url().max(255).nullable().optional(),
-});
-
 const LeaveGroupSchema = z.object({
   new_owner_id: z.coerce.number().int().positive().optional(),
 });
@@ -101,6 +98,71 @@ async function getMembershipOrNull(id_gruppo: number, id_persona: number) {
       },
     },
   });
+}
+
+async function ensureGroupPortfolio(
+  tx: Prisma.TransactionClient,
+  id_gruppo: number,
+  id_persona: number,
+  initialLiquidity: Prisma.Decimal,
+) {
+  const existing = await tx.portafoglio.findUnique({
+    where: {
+      id_persona_id_gruppo: {
+        id_persona,
+        id_gruppo,
+      },
+    },
+    select: {
+      id_portafoglio: true,
+      liquidita: true,
+      id_persona: true,
+      id_gruppo: true,
+    },
+  });
+
+  if (existing) return existing;
+
+  try {
+    return await tx.portafoglio.create({
+      data: {
+        id_persona,
+        id_gruppo,
+        liquidita: initialLiquidity,
+      },
+      select: {
+        id_portafoglio: true,
+        liquidita: true,
+        id_persona: true,
+        id_gruppo: true,
+      },
+    });
+  } catch (error: unknown) {
+    // Covers race conditions or existing DB trigger behavior that inserts the same row first.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2002'
+    ) {
+      const fallback = await tx.portafoglio.findUnique({
+        where: {
+          id_persona_id_gruppo: {
+            id_persona,
+            id_gruppo,
+          },
+        },
+        select: {
+          id_portafoglio: true,
+          liquidita: true,
+          id_persona: true,
+          id_gruppo: true,
+        },
+      });
+
+      if (fallback) return fallback;
+    }
+
+    throw error;
+  }
 }
 
 async function requireMembership(
@@ -246,13 +308,26 @@ export async function createGroup(req: Request, res: Response): Promise<void> {
         },
       });
 
-      return { group, membership };
+      const portfolio = await ensureGroupPortfolio(
+        tx,
+        group.id_gruppo,
+        sub,
+        membership.budget_iniziale,
+      );
+
+      return { group, membership, portfolio };
     });
 
     res.status(201).json({
       message: 'Gruppo creato con successo.',
       group: result.group,
       membership: result.membership,
+      portfolio: {
+        id_portafoglio: result.portfolio.id_portafoglio,
+        liquidita: result.portfolio.liquidita.toString(),
+        id_persona: result.portfolio.id_persona,
+        id_gruppo: result.portfolio.id_gruppo,
+      },
     });
   } catch (error: unknown) {
     if (
@@ -1143,7 +1218,7 @@ export async function acceptGroupInvite(req: Request, res: Response): Promise<vo
       },
     });
 
-    return tx.membro_Gruppo.create({
+    const createdMembership = await tx.membro_Gruppo.create({
       data: {
         id_persona: sub,
         id_gruppo,
@@ -1151,6 +1226,15 @@ export async function acceptGroupInvite(req: Request, res: Response): Promise<vo
         budget_iniziale: invite.gruppo.budget_iniziale,
       },
     });
+
+    await ensureGroupPortfolio(
+      tx,
+      id_gruppo,
+      sub,
+      createdMembership.budget_iniziale,
+    );
+
+    return createdMembership;
   });
 
   res.json({
@@ -1304,7 +1388,7 @@ export async function getGroupPublicProfile(req: Request, res: Response): Promis
     group: {
       id_gruppo: readContext.group.id_gruppo,
       nome: readContext.group.nome,
-      photo_url: readContext.group.photo_url,
+      photo_url: resolveStoredProfilePhotoUrl(readContext.group.photo_url),
       privacy: readContext.group.privacy,
       descrizione: readContext.group.descrizione,
       budget_iniziale: readContext.group.budget_iniziale.toString(),
@@ -1602,21 +1686,35 @@ export async function updateGroupDescription(req: Request, res: Response): Promi
 
 export async function updateGroupPhoto(req: Request, res: Response): Promise<void> {
   const parsedParams = GroupIdParamsSchema.safeParse(req.params);
-  const parsedBody = UpdateGroupPhotoSchema.safeParse(req.body);
 
-  if (!parsedParams.success || !parsedBody.success) {
+  if (!parsedParams.success) {
     res.status(400).json({
       error: 'VALIDATION_ERROR',
-      message: parsedParams.error?.errors[0]?.message
-        ?? parsedBody.error?.errors[0]?.message
-        ?? 'Payload non valido.',
+      message: parsedParams.error?.errors[0]?.message ?? 'Payload non valido.',
+    });
+    return;
+  }
+
+  const file = req.file;
+
+  if (!file) {
+    res.status(400).json({
+      error: 'PHOTO_FILE_REQUIRED',
+      message: 'Il file immagine del gruppo e obbligatorio.',
+    });
+    return;
+  }
+
+  if (file.size > 2 * 1024 * 1024) {
+    res.status(413).json({
+      error: 'PHOTO_TOO_LARGE',
+      message: 'L\'immagine gruppo deve essere al massimo 2MB.',
     });
     return;
   }
 
   const { sub } = (req as AuthRequest).user;
   const { id_gruppo } = parsedParams.data;
-  const photo_url = parsedBody.data.photo_url?.trim() || null;
 
   const group = await prisma.gruppo.findUnique({
     where: { id_gruppo },
@@ -1632,34 +1730,100 @@ export async function updateGroupPhoto(req: Request, res: Response): Promise<voi
   }
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
-  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
+  if (!membership || membership.ruolo !== 'Owner') {
     res.status(403).json({
-      error: 'INSUFFICIENT_ROLE',
-      message: 'Solo Owner o Admin possono modificare la foto del gruppo.',
+      error: 'ONLY_OWNER_CAN_UPDATE_GROUP_PHOTO',
+      message: 'Solo l\'owner puo modificare o aggiungere la foto del gruppo.',
     });
     return;
   }
 
-  const updated = await prisma.gruppo.update({
-    where: { id_gruppo },
-    data: { photo_url },
-    select: {
-      id_gruppo: true,
-      nome: true,
-      privacy: true,
-      photo_url: true,
-      descrizione: true,
-      budget_iniziale: true,
-    },
-  });
+  try {
+    const uploaded = await uploadGroupImage({
+      groupId: id_gruppo,
+      buffer: file.buffer,
+    });
 
-  res.json({
-    message: 'Foto gruppo aggiornata con successo.',
-    group: {
-      ...updated,
-      budget_iniziale: updated.budget_iniziale.toString(),
-    },
-  });
+    const updated = await prisma.gruppo.update({
+      where: { id_gruppo },
+      data: {
+        photo_url: uploaded.public_id,
+      },
+      select: {
+        id_gruppo: true,
+        nome: true,
+        privacy: true,
+        photo_url: true,
+        descrizione: true,
+        budget_iniziale: true,
+      },
+    });
+
+    res.json({
+      message: 'Foto gruppo aggiornata con successo.',
+      group: {
+        ...updated,
+        budget_iniziale: updated.budget_iniziale.toString(),
+      },
+    });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown upload error';
+
+    if (errorMessage.startsWith('CLOUDINARY_NOT_CONFIGURED')) {
+      res.status(503).json({
+        error: 'PHOTO_UPLOAD_UNAVAILABLE',
+        message: 'Upload foto gruppo temporaneamente non disponibile. Cloudinary non configurato sul server.',
+      });
+      return;
+    }
+
+    console.error('[updateGroupPhoto] upload failed:', error);
+    res.status(500).json({
+      error: 'GROUP_PHOTO_UPDATE_FAILED',
+      message: 'Impossibile aggiornare la foto del gruppo.',
+    });
+  }
+}
+
+export async function removeGroupPhoto(req: Request, res: Response): Promise<void> {
+  const parsed = GroupIdParamsSchema.safeParse(req.params);
+
+  if (!parsed.success) {
+    res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0]?.message ?? 'id_gruppo non valido.' });
+    return;
+  }
+
+  const { id_gruppo } = parsed.data;
+  const { sub } = (req as AuthRequest).user;
+
+  const membership = await getMembershipOrNull(id_gruppo, sub);
+  if (!membership || membership.ruolo !== 'Owner') {
+    res.status(403).json({ error: 'ONLY_OWNER_CAN_REMOVE_PHOTO', message: 'Solo l\'owner puo rimuovere la foto del gruppo.' });
+    return;
+  }
+
+  const group = await prisma.gruppo.findUnique({ where: { id_gruppo }, select: { photo_url: true } });
+  if (!group) {
+    res.status(404).json({ error: 'GROUP_NOT_FOUND', message: 'Gruppo non trovato.' });
+    return;
+  }
+
+  const prev = group.photo_url ?? null;
+
+  await prisma.gruppo.update({ where: { id_gruppo }, data: { photo_url: null } });
+
+  if (prev) {
+    try {
+      const { deleteImage } = await import('../lib/cloudinary');
+      await deleteImage(prev);
+    } catch (err) {
+      // log and continue
+      // eslint-disable-next-line no-console
+      console.warn('[removeGroupPhoto] cloudinary deletion failed', err);
+    }
+  }
+
+  res.json({ message: 'Group photo removed.' });
 }
 
 export async function getMyGroups(req: Request, res: Response): Promise<void> {
@@ -1802,7 +1966,7 @@ export async function getGroupRanking(req: Request, res: Response): Promise<void
       posizione: index + 1,
       id_persona: row.id_persona,
       username: row.username,
-      photo_url: row.photo_url,
+      photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
       ruolo: row.ruolo,
       valore_totale: row.valore_totale.toString(),
     }));
@@ -1839,7 +2003,7 @@ export async function getMyGroupWorkspace(req: Request, res: Response): Promise<
     return;
   }
 
-  const [group, portfolio] = await Promise.all([
+  const [group, portfolioRaw] = await Promise.all([
     prisma.gruppo.findUnique({
       where: { id_gruppo },
       select: {
@@ -1864,6 +2028,40 @@ export async function getMyGroupWorkspace(req: Request, res: Response): Promise<
       },
     }),
   ]);
+
+  let portfolio = portfolioRaw;
+
+  if (!portfolio) {
+    portfolio = await prisma.$transaction(async (tx) => {
+      const currentMembership = await tx.membro_Gruppo.findUnique({
+        where: {
+          id_persona_id_gruppo: {
+            id_persona: sub,
+            id_gruppo,
+          },
+        },
+        select: {
+          budget_iniziale: true,
+        },
+      });
+
+      if (!currentMembership) return null;
+
+      const ensured = await ensureGroupPortfolio(
+        tx,
+        id_gruppo,
+        sub,
+        currentMembership.budget_iniziale,
+      );
+
+      return {
+        id_portafoglio: ensured.id_portafoglio,
+        liquidita: ensured.liquidita,
+        id_persona: ensured.id_persona,
+        id_gruppo: ensured.id_gruppo,
+      };
+    });
+  }
 
   if (!group) {
     res.status(404).json({
