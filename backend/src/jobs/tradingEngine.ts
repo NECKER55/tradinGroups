@@ -7,8 +7,21 @@ const MIN_PENDING_AGE_MS = 20_000;
 
 let isProcessing = false;
 
-async function processPendingOrders(): Promise<void> {
-  if (isProcessing) return;
+export type ProcessPendingOrdersResult = {
+  status: 'processed' | 'skipped_running';
+  totalPendingOrders: number;
+  executedOrders: number;
+};
+
+export async function processPendingOrders(): Promise<ProcessPendingOrdersResult> {
+  if (isProcessing) {
+    return {
+      status: 'skipped_running',
+      totalPendingOrders: 0,
+      executedOrders: 0,
+    };
+  }
+
   isProcessing = true;
 
   try {
@@ -44,7 +57,13 @@ async function processPendingOrders(): Promise<void> {
       }),
     ]);
 
-    if (pendingOrders.length === 0) return;
+    if (pendingOrders.length === 0) {
+      return {
+        status: 'processed',
+        totalPendingOrders: 0,
+        executedOrders: 0,
+      };
+    }
 
     const tickers = new Set<string>();
     for (const order of pendingOrders) tickers.add(order.id_stock);
@@ -52,6 +71,8 @@ async function processPendingOrders(): Promise<void> {
     for (const item of portfolioTickers) tickers.add(item.id_stock);
 
     const quotes = await fetchQuotesForTickers([...tickers]);
+
+    let executedOrders = 0;
 
     for (const order of pendingOrders) {
       const currentPrice = quotes.get(order.id_stock);
@@ -66,7 +87,7 @@ async function processPendingOrders(): Promise<void> {
 
         const quantity = order.importo_investito.div(executionPrice);
 
-        await prisma.transazione.updateMany({
+        const buyResult = await prisma.transazione.updateMany({
           where: {
             id_transazione: order.id_transazione,
             stato: 'Pending',
@@ -79,12 +100,16 @@ async function processPendingOrders(): Promise<void> {
           },
         });
 
+        if (buyResult.count > 0) {
+          executedOrders += 1;
+        }
+
         continue;
       }
 
       if (!order.quantita_azioni) continue;
 
-      await prisma.transazione.updateMany({
+      const sellResult = await prisma.transazione.updateMany({
         where: {
           id_transazione: order.id_transazione,
           stato: 'Pending',
@@ -95,9 +120,20 @@ async function processPendingOrders(): Promise<void> {
           approved_at: new Date(),
         },
       });
+
+      if (sellResult.count > 0) {
+        executedOrders += 1;
+      }
     }
+
+    return {
+      status: 'processed',
+      totalPendingOrders: pendingOrders.length,
+      executedOrders,
+    };
   } catch (error) {
     console.error('[jobs] Errore trading engine:', error);
+    throw error;
   } finally {
     isProcessing = false;
   }

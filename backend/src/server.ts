@@ -124,8 +124,9 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Server avviato su http://localhost:${PORT}`);
   console.log(`   Ambiente: ${process.env.NODE_ENV ?? 'development'}\n`);
 
-  // Avvia i cron job solo in produzione o se esplicitamente abilitati.
-  if (process.env.NODE_ENV === 'production' || process.env.ENABLE_CRON === 'true') {
+  // In produzione i job vengono invocati da endpoint sicuri (/api/jobs/*).
+  // L'esecuzione automatica rimane disponibile solo in ambienti non-prod quando esplicitamente abilitata.
+  if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_CRON === 'true') {
     startCronJobs();
     startDailyPortfolioValuationJob();
   }

@@ -24,6 +24,11 @@ type SnapshotPending = {
 const DAILY_RUN_HOUR = 8;
 let isValuationRunning = false;
 
+export type PortfolioValuationResult = {
+  status: 'processed' | 'skipped_running';
+  snapshotCount: number;
+};
+
 function getNextRunAt(now = new Date()): Date {
   const next = new Date(now);
   next.setHours(DAILY_RUN_HOUR, 0, 0, 0);
@@ -161,10 +166,13 @@ async function syncCurrentStockPrices(quotes: Map<string, number>): Promise<void
   }
 }
 
-export async function runPortfolioValuationJobOnce(): Promise<void> {
+export async function runPortfolioValuationJobOnce(): Promise<PortfolioValuationResult> {
   if (isValuationRunning) {
     console.log('[jobs] Portfolio valuation gia in esecuzione, skip.');
-    return;
+    return {
+      status: 'skipped_running',
+      snapshotCount: 0,
+    };
   }
 
   isValuationRunning = true;
@@ -177,7 +185,10 @@ export async function runPortfolioValuationJobOnce(): Promise<void> {
     const { portfolios, pendingOrders } = await readSnapshot(prisma as PrismaClient);
     if (portfolios.length === 0) {
       console.log('[jobs] Nessun portafoglio trovato, fine valuation.');
-      return;
+      return {
+        status: 'processed',
+        snapshotCount: 0,
+      };
     }
 
     // Richiesta quotazioni una sola volta per tutti i ticker coinvolti.
@@ -214,8 +225,13 @@ export async function runPortfolioValuationJobOnce(): Promise<void> {
     });
 
     console.log(`[jobs] Portfolio valuation completata: ${rows.length} snapshot salvati.`);
+    return {
+      status: 'processed',
+      snapshotCount: rows.length,
+    };
   } catch (error) {
     console.error('[jobs] Errore portfolio valuation:', error);
+    throw error;
   } finally {
     isValuationRunning = false;
   }
