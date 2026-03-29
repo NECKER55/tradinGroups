@@ -1,12 +1,41 @@
-import 'dotenv/config'
-import { defineConfig, env } from 'prisma/config'
+# dependencies
+node_modules/
+**/node_modules/
 
-export default defineConfig({
-  schema: 'prisma/schema.prisma',
-  migrations: {
-    path: 'prisma/migrations',
-  },
-  datasource: {
-    url: env('DATABASE_URL'),
-  },
-})
+# build outputs
+dist/
+build/
+coverage/
+**/dist/
+**/build/
+**/coverage/
+
+# environment and secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# database dumps and local backups
+*.dump
+*.sql
+backups/
+finapp-backup.dump
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local command/output scratch files present in workspace
+ql -*
