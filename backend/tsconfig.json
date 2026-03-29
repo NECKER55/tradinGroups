@@ -9,8 +9,9 @@
     "outDir": "./dist",
     "rootDir": "./",
     "resolveJsonModule": true,
-    "baseUrl": ".",
-    "types": ["node", "express", "cors", "jsonwebtoken", "multer"]
+    "moduleResolution": "node",
+    "allowJs": true,
+    "noImplicitAny": false
   },
   "include": ["prisma/**/*.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
