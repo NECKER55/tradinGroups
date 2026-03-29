@@ -46,6 +46,23 @@ const DeleteUserParamsSchema = z.object({
   id_persona: z.coerce.number().int().positive(),
 });
 
+const BanUserParamsSchema = z.object({
+  id_persona: z.coerce.number().int().positive(),
+});
+
+const BanUserBodySchema = z.object({
+  is_banned: z.boolean().optional(),
+});
+
+const AdminListQuerySchema = z.object({
+  q: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  include_all: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
+});
+
 const REFRESH_COOKIE_PATH = '/api/auth/refresh';
 
 async function detachMemberFromGroup(
@@ -964,6 +981,243 @@ export async function changeMyEmail(req: Request, res: Response): Promise<void> 
       message: 'Unable to update email.',
     });
   }
+}
+
+export async function adminListUsers(req: Request, res: Response): Promise<void> {
+  const requester = (req as AuthRequest).user;
+
+  if (!requester.is_superuser) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Superuser access required.',
+    });
+    return;
+  }
+
+  const parsed = AdminListQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Invalid query params.',
+    });
+    return;
+  }
+
+  const queryText = parsed.data.q?.trim() ?? '';
+  const includeAll = Boolean(parsed.data.include_all);
+  const limit = includeAll ? 500 : (parsed.data.limit ?? 20);
+
+  const whereClause = queryText
+    ? Prisma.sql`WHERE p.username ILIKE ${`${queryText}%`} OR c.email ILIKE ${`${queryText}%`}`
+    : Prisma.sql``;
+
+  const [rows, totalRows] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      id_persona: number;
+      username: string;
+      email: string | null;
+      photo_url: string | null;
+      is_superuser: boolean;
+      is_banned: boolean;
+      is_deleted: boolean;
+    }>>(Prisma.sql`
+      SELECT p.id_persona, p.username, c.email, p.photo_url, p.is_superuser, p.is_banned, p.is_deleted
+      FROM persona p
+      LEFT JOIN credenziali c ON c.id_persona = p.id_persona
+      ${whereClause}
+      ORDER BY p.id_persona DESC
+      LIMIT ${limit}
+    `),
+    prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS total
+      FROM persona p
+      LEFT JOIN credenziali c ON c.id_persona = p.id_persona
+      ${whereClause}
+    `),
+  ]);
+
+  const total = Number(totalRows[0]?.total ?? 0n);
+
+  res.json({
+    total,
+    returned: rows.length,
+    users: rows.map((row) => ({
+      ...row,
+      photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
+    })),
+  });
+}
+
+export async function adminListGroups(req: Request, res: Response): Promise<void> {
+  const requester = (req as AuthRequest).user;
+
+  if (!requester.is_superuser) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Superuser access required.',
+    });
+    return;
+  }
+
+  const parsed = AdminListQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: parsed.error.errors[0]?.message ?? 'Invalid query params.',
+    });
+    return;
+  }
+
+  const queryText = parsed.data.q?.trim() ?? '';
+  const includeAll = Boolean(parsed.data.include_all);
+  const limit = includeAll ? 500 : (parsed.data.limit ?? 20);
+
+  const whereClause = queryText
+    ? Prisma.sql`WHERE g.nome ILIKE ${`${queryText}%`} OR COALESCE(g.descrizione, '') ILIKE ${`${queryText}%`}`
+    : Prisma.sql``;
+
+  const [rows, totalRows] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      id_gruppo: number;
+      nome: string;
+      privacy: 'Public' | 'Private';
+      descrizione: string | null;
+      photo_url: string | null;
+      budget_iniziale: Prisma.Decimal;
+      members_count: bigint;
+    }>>(Prisma.sql`
+      SELECT
+        g.id_gruppo,
+        g.nome,
+        g.privacy,
+        g.descrizione,
+        g.photo_url,
+        g.budget_iniziale,
+        COUNT(mg.id_persona)::bigint AS members_count
+      FROM gruppo g
+      LEFT JOIN membro_gruppo mg ON mg.id_gruppo = g.id_gruppo
+      ${whereClause}
+      GROUP BY g.id_gruppo
+      ORDER BY g.id_gruppo DESC
+      LIMIT ${limit}
+    `),
+    prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS total
+      FROM gruppo g
+      ${queryText
+    ? Prisma.sql`WHERE g.nome ILIKE ${`${queryText}%`} OR COALESCE(g.descrizione, '') ILIKE ${`${queryText}%`}`
+    : Prisma.sql``}
+    `),
+  ]);
+
+  const total = Number(totalRows[0]?.total ?? 0n);
+
+  res.json({
+    total,
+    returned: rows.length,
+    groups: rows.map((row) => ({
+      ...row,
+      members_count: Number(row.members_count),
+      budget_iniziale: row.budget_iniziale.toString(),
+      photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
+    })),
+  });
+}
+
+export async function adminSetUserBan(req: Request, res: Response): Promise<void> {
+  const requester = (req as AuthRequest).user;
+
+  if (!requester.is_superuser) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Superuser access required.',
+    });
+    return;
+  }
+
+  const parsedParams = BanUserParamsSchema.safeParse(req.params);
+  const parsedBody = BanUserBodySchema.safeParse(req.body ?? {});
+
+  if (!parsedParams.success) {
+    const firstError = parsedParams.error.errors[0]?.message;
+
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: firstError ?? 'Invalid payload.',
+    });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    const firstError = parsedBody.error.errors[0]?.message;
+
+    res.status(400).json({
+      error: 'VALIDATION_ERROR',
+      message: firstError ?? 'Invalid payload.',
+    });
+    return;
+  }
+
+  const targetUserId = parsedParams.data.id_persona;
+
+  if (targetUserId === requester.sub) {
+    res.status(400).json({
+      error: 'INVALID_OPERATION',
+      message: 'You cannot ban your own account.',
+    });
+    return;
+  }
+
+  const target = await prisma.persona.findUnique({
+    where: { id_persona: targetUserId },
+    select: {
+      id_persona: true,
+      username: true,
+      is_superuser: true,
+      is_banned: true,
+      is_deleted: true,
+    },
+  });
+
+  if (!target) {
+    res.status(404).json({
+      error: 'USER_NOT_FOUND',
+      message: 'User not found.',
+    });
+    return;
+  }
+
+  if (target.is_superuser) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Cannot ban a superuser account.',
+    });
+    return;
+  }
+
+  if (target.is_deleted) {
+    res.status(409).json({
+      error: 'ACCOUNT_DELETED',
+      message: 'Cannot update ban state for a deleted account.',
+    });
+    return;
+  }
+
+  const desiredBanState = parsedBody.data.is_banned ?? !target.is_banned;
+
+  await prisma.persona.update({
+    where: { id_persona: targetUserId },
+    data: { is_banned: desiredBanState },
+  });
+
+  res.json({
+    message: desiredBanState ? 'User banned successfully.' : 'User unbanned successfully.',
+    user: {
+      id_persona: target.id_persona,
+      username: target.username,
+      is_banned: desiredBanState,
+    },
+  });
 }
 
 // ─── Utility ──────────────────────────────────────────────────

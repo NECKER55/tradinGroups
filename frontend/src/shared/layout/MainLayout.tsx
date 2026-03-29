@@ -27,6 +27,14 @@ export function MainLayout() {
           <div className="flex items-center gap-3">
             {isAuthenticated ? (
               <>
+                {user?.is_superuser ? (
+                  <Link
+                    to="/admin"
+                    className="rounded-lg border border-amber-300/55 bg-amber-500/20 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-amber-100 transition hover:bg-amber-500/30"
+                  >
+                    Admin
+                  </Link>
+                ) : null}
                 <Link to="/social?account=1" className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition-colors hover:bg-canvas/10">
                   <span className="text-base font-bold text-canvas/85">{user?.username}</span>
                   <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-canvas/20 bg-canvas/10">

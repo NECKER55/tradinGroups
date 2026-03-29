@@ -11,6 +11,9 @@ export const ROUTES = {
     CHANGE_PHOTO: '/auth/me/photo',
     CHANGE_EMAIL: '/auth/me/email',
     DELETE_USER: (userId: number) => `/auth/users/${userId}`,
+    ADMIN_USERS: '/auth/admin/users',
+    ADMIN_GROUPS: '/auth/admin/groups',
+    ADMIN_USER_BAN: (userId: number) => `/auth/admin/users/${userId}/ban`,
   },
   TRADING: {
     PRIVATE_BALANCE: '/trading/private/balance',

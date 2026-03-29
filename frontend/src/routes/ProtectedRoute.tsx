@@ -1,8 +1,12 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../features/auth/context/AuthContext';
 
-export function ProtectedRoute() {
-  const { loading, isAuthenticated } = useAuth();
+interface ProtectedRouteProps {
+  requireSuperuser?: boolean;
+}
+
+export function ProtectedRoute({ requireSuperuser = false }: ProtectedRouteProps) {
+  const { loading, isAuthenticated, user } = useAuth();
 
   if (loading) {
     return (
@@ -14,6 +18,10 @@ export function ProtectedRoute() {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (requireSuperuser && !user?.is_superuser) {
+    return <Navigate to="/" replace />;
   }
 
   return <Outlet />;

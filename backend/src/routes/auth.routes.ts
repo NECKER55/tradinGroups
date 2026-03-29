@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
 import { uploadProfilePhoto } from '../middleware/uploadProfilePhoto';
 import {
+  adminListGroups,
+  adminListUsers,
+  adminSetUserBan,
 	changeMyEmail,
 	changeMyPassword,
 	changeMyPhoto,
@@ -28,5 +31,8 @@ authRouter.put('/me/photo', authenticate, uploadProfilePhoto.single('photo'), ch
 authRouter.delete('/me/photo', authenticate, removeMyPhoto);
 authRouter.put('/me/email', authenticate, changeMyEmail);
 authRouter.delete('/users/:id_persona', authenticate, deleteUserAccount);
+authRouter.get('/admin/users', authenticate, adminListUsers);
+authRouter.get('/admin/groups', authenticate, adminListGroups);
+authRouter.patch('/admin/users/:id_persona/ban', authenticate, adminSetUserBan);
 
 export default authRouter;
