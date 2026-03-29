@@ -1,0 +1,14 @@
+name: Trading Engine Cron
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Scatta ogni 5 minuti, 24/7
+  workflow_dispatch: # Ti permette di avviarlo a mano per testare
+
+jobs:
+  ping-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Trading Engine API
+        run: |
+          curl -X POST https://tuo-backend.onrender.com/api/jobs/process-orders \
+          -H "x-cron-key: ${{ secrets.CRON_SECRET }}
