@@ -1,0 +1,14 @@
+name: Daily Portfolio Valuation
+on:
+  schedule:
+    - cron: '0 8 * * *' # Scatta ogni giorno alle 08:00 UTC
+  workflow_dispatch:
+
+jobs:
+  ping-valuation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Valuation API
+        run: |
+          curl -X POST https://tuo-backend.onrender.com/api/jobs/daily-valuation \
+          -H "x-cron-key: ${{ secrets.CRON_SECRET }}"
