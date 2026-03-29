@@ -4,9 +4,10 @@
   "description": "Database layer per piattaforma di trading simulato",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
-    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:reset": "prisma migrate reset",
