@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { resolveStoredProfilePhotoUrl } from '../lib/cloudinary';
 import { AuthRequest } from '../types';
 
 const CreateOrderSchema = z.object({
@@ -578,7 +579,10 @@ export async function searchPeopleByUsernameOrId(req: Request, res: Response): P
   res.json({
     q: parsed.data.q,
     count: rows.length,
-    results: rows,
+    results: rows.map((row) => ({
+      ...row,
+      photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
+    })),
   });
 }
 

@@ -254,7 +254,7 @@ export function GroupDetailPage() {
     if (!settingsOpen) return;
     if (!Number.isFinite(parsedGroupId)) return;
 
-    if (groupRole === 'Owner' || groupRole === 'Admin') {
+    if (groupRole === 'Owner' || groupRole === 'Admin' || user?.is_superuser) {
       void getMySentGroupInvites().then((res) => {
         const ids = res.invites
           .filter((invite) => invite.id_gruppo === parsedGroupId)
@@ -264,7 +264,7 @@ export function GroupDetailPage() {
         setSentInviteIds([]);
       });
     }
-  }, [groupRole, parsedGroupId, settingsOpen]);
+  }, [groupRole, parsedGroupId, settingsOpen, user?.is_superuser]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -373,10 +373,13 @@ export function GroupDetailPage() {
     if (!root) return;
 
     const targets = Array.from(
-      root.querySelectorAll<HTMLElement>('button, .rounded-xl, .rounded-2xl, .violet-underlight, .group-glow-card'),
+      root.querySelectorAll<HTMLElement>('.group-glow-card'),
     ).filter((el) => !el.classList.contains('group-glow-ignore'));
 
-    targets.forEach((el) => el.classList.add('social-glow-card'));
+    if (targets.length === 0) {
+      root.classList.remove('social-glow-scope');
+      return;
+    }
 
     const proximity = 230;
     const fadeDistance = 420;
@@ -450,7 +453,6 @@ export function GroupDetailPage() {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       root.removeEventListener('mousemove', onMouseMove);
       root.removeEventListener('mouseleave', onMouseLeave);
-      targets.forEach((el) => el.classList.remove('social-glow-card'));
       root.classList.remove('social-glow-scope');
     };
   }, []);
@@ -502,7 +504,7 @@ export function GroupDetailPage() {
   }, [historyPeriodFilter, historyStatusFilter, historyTypeFilter, workspaceTransactions]);
 
   const isOwner = groupRole === 'Owner';
-  const isAdmin = groupRole === 'Admin' || isOwner;
+  const isAdmin = Boolean(user?.is_superuser) || groupRole === 'Admin' || isOwner;
   const groupAvatar64 = resolveGroupPhotoUrl(group?.photo_url, 64);
   const groupAvatar128 = resolveGroupPhotoUrl(group?.photo_url, 128);
   const rankingAvatarRefreshKey = useMemo(() => Date.now(), [ranking]);
@@ -915,23 +917,45 @@ export function GroupDetailPage() {
             </section>
 
             {canAccessWorkspace ? (
-            <div className="rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
-              <div className="relative">
-                <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+            <div className="group-glow-card relative w-full overflow-hidden rounded-2xl border border-[#232337] bg-[#11131f]/88 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.38)] backdrop-blur-sm">
+              <div className="pointer-events-none absolute -left-12 -top-16 h-40 w-40 rounded-full bg-violet-500/14 blur-3xl" />
+              <div className="pointer-events-none absolute -right-16 -bottom-16 h-44 w-44 rounded-full bg-fuchsia-500/10 blur-3xl" />
+              <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(120%_80%_at_10%_0%,rgba(139,92,246,0.16),transparent_58%)]" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/45 to-transparent" />
+
+              <div className="relative mb-4 min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-300/80">Quick stock search</p>
+                <h3 className="mt-1 text-lg font-bold text-slate-100">Type a ticker or company name</h3>
+                <p className="mt-1 text-xs text-slate-400">Use this search bar to open stock details inside the group workspace.</p>
+              </div>
+
+              <div className="relative rounded-2xl border border-[#232337] bg-[#0f0f14]/85 shadow-[0_0_0_1px_rgba(139,92,246,0.06),0_14px_30px_rgba(0,0,0,0.35)] backdrop-blur-sm transition-all focus-within:border-violet-500/70 focus-within:shadow-[0_0_0_1px_rgba(139,92,246,0.18),0_18px_34px_rgba(20,16,32,0.55)]">
+                <span className="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-xl text-slate-400">search</span>
                 <input
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search stocks, ETFs..."
-                  className="w-full rounded-xl border border-[#1f1f2e] bg-[#0f0f14] py-2.5 pl-10 pr-4 text-sm text-slate-100 outline-none transition-all placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/30"
+                  placeholder="Search stocks, ETFs, or tickers..."
+                  className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-24 text-base text-slate-100 outline-none placeholder:text-slate-500"
                 />
+                {searchTerm.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-600/50 bg-[#171721] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300 transition-colors hover:border-violet-400/40 hover:text-violet-200"
+                  >
+                    Clear
+                  </button>
+                ) : null}
               </div>
+
+              <p className="mt-2 text-[11px] text-slate-500">Tip: you can search by symbol (e.g. NVDA) or full company name.</p>
 
               {searchLoading ? <p className="mt-3 text-xs text-slate-400">Searching...</p> : null}
               {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
 
               {searchTerm.trim() && !searchLoading && !searchError ? (
-                <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                <div className="mt-3 max-h-56 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
                   {searchResults.length === 0 ? (
                     <p className="text-xs text-slate-400">No stocks found.</p>
                   ) : (
@@ -939,13 +963,13 @@ export function GroupDetailPage() {
                       <div
                         key={stock.id_stock}
                         onClick={() => navigate(buildGroupStockHref(stock.id_stock), { state: { stock } })}
-                        className="flex cursor-pointer items-center justify-between rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
+                        className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
                       >
-                        <div>
-                          <p className="text-sm font-semibold text-slate-100">{stock.nome_societa}</p>
-                          <p className="text-[11px] uppercase tracking-wider text-slate-500">{stock.settore}</p>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-100">{stock.nome_societa}</p>
+                          <p className="truncate text-[11px] uppercase tracking-wider text-slate-500">{stock.settore}</p>
                         </div>
-                        <span className="rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-xs font-bold text-violet-200">
+                        <span className="shrink-0 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-xs font-bold text-violet-200">
                           {stock.id_stock}
                         </span>
                       </div>

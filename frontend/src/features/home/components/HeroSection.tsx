@@ -9,11 +9,17 @@ export function HeroSection({ searchTerm, onSearchTermChange, searchLoading }: H
     <section className="mx-auto max-w-7xl px-6 py-12">
       <div className="violet-underlight mb-12 flex flex-col items-center gap-6 text-center animate-rise-in">
         <h1 className="text-4xl font-black tracking-tight text-canvas md:text-6xl">
-          Find Your <span className="text-signal">Squad</span>
+          <span className="text-white">Trading</span><span className="text-signal">IQ</span>
         </h1>
-        <p className="max-w-xl text-canvas/65">
-          Join elite trading groups, compete in global challenges, and master the markets together.
+        <p className="max-w-2xl text-canvas/65">
+          TradingIQ lets you manage a personal trading workspace and separate group portfolios with isolated budgets.
+          In each group, members compete on performance and rankings to prove who trades better.
         </p>
+
+        <div className="w-full max-w-2xl text-left">
+          <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-violet-300/85">Find the squads</h2>
+          <p className="mt-1 text-xs text-canvas/55">Search public groups by name and open their leaderboard preview.</p>
+        </div>
 
         <div className="group relative w-full max-w-2xl">
           <div className="absolute -inset-1 rounded-2xl bg-gradient-to-r from-[#7c3aed] via-[#a855f7] to-[#6366f1] blur opacity-35 transition-opacity group-hover:opacity-65" />

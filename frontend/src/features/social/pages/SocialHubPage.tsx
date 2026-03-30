@@ -186,6 +186,7 @@ export function SocialHubPage() {
   const invitesPanelRef = useRef<HTMLDivElement | null>(null);
   const userAvatar96 = resolveUserPhotoUrl(user?.photo_url, 96);
   const rankingAvatarRefreshKey = useMemo(() => Date.now(), [groupRankingPreviewById]);
+  const searchAvatarRefreshKey = useMemo(() => Date.now(), [peopleResults, inviteSearchResults]);
 
   const refreshData = useCallback(async () => {
     const [friendshipsRes, myGroupsRes, invitesRes, sentInvitesRes] = await Promise.all([
@@ -1300,11 +1301,12 @@ export function SocialHubPage() {
                 ) : (
                   peopleResults.map((person) => {
                     const relation = userRelation(person.id_persona);
+                    const personAvatar = resolveUserPhotoUrl(person.photo_url, 64);
                     return (
                       <div key={person.id_persona} className="flex items-center justify-between rounded-xl border border-[#232337] bg-[#13131a] p-3">
                         <div className="flex items-center gap-3">
                           <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-xs font-black text-violet-200">
-                            {resolveUserPhotoUrl(person.photo_url, 64) ? <img src={resolveUserPhotoUrl(person.photo_url, 64) ?? ''} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
+                            {personAvatar ? <img src={`${personAvatar}${personAvatar.includes('?') ? '&' : '?'}rk=${searchAvatarRefreshKey}`} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
                           </div>
                           <div>
                             <p className="text-sm font-bold text-slate-100">{person.username}</p>
@@ -1659,6 +1661,7 @@ export function SocialHubPage() {
                         const isSelf = person.id_persona === user?.id_persona;
                         const isAlreadyInvited = selectedInviteeIds.includes(person.id_persona);
                         const disabled = isSelf || isAlreadyInvited;
+                        const personAvatar = resolveUserPhotoUrl(person.photo_url, 64);
 
                         return (
                           <button
@@ -1672,7 +1675,7 @@ export function SocialHubPage() {
                           >
                             <div className="flex items-center gap-3">
                               <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-violet-500/25 bg-[#1a1a27] text-[11px] font-black text-violet-200">
-                                {resolveUserPhotoUrl(person.photo_url, 64) ? <img src={resolveUserPhotoUrl(person.photo_url, 64) ?? ''} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
+                                {personAvatar ? <img src={`${personAvatar}${personAvatar.includes('?') ? '&' : '?'}rk=${searchAvatarRefreshKey}`} alt={person.username} className="h-full w-full object-cover" /> : avatarFallback(person.username)}
                               </div>
                               <div>
                                 <span className="text-sm font-semibold text-slate-100">{person.username}</span>

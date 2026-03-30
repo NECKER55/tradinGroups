@@ -11,7 +11,7 @@ type HoldingRow = {
 
 type HoldingsDonutPanelProps = {
   items: HoldingRow[];
-  currentPrices?: Record<string, number>;
+  currentPrices?: Record<string, number | null>;
   onSelect: (stockId: string) => void;
   emptyLabel: string;
 };
@@ -59,14 +59,21 @@ export function HoldingsDonutPanel({ items, currentPrices = {}, onSelect, emptyL
   const normalized = items.map((item) => {
     const quantity = Math.max(0, toNumber(item.numero));
     const avgBuy = Math.max(0, toNumber(item.prezzo_medio_acquisto));
-    const currentPrice = Math.max(0, currentPrices[item.id_stock] ?? 0);
+    const currentPriceValue = currentPrices[item.id_stock];
+    const hasCurrentPrice = typeof currentPriceValue === 'number' && Number.isFinite(currentPriceValue);
+    const currentPrice = hasCurrentPrice
+      ? Math.max(0, currentPriceValue)
+      : 0;
     const invested = quantity * avgBuy;
     const marketValue = quantity * currentPrice;
-    const deltaValue = marketValue - invested;
-    const deltaPct = invested > 0 ? (deltaValue / invested) * 100 : 0;
+    const deltaValue = hasCurrentPrice ? marketValue - invested : null;
+    const deltaPct = hasCurrentPrice && avgBuy > 0
+      ? ((currentPrice - avgBuy) / avgBuy) * 100
+      : null;
 
     return {
       ...item,
+      hasCurrentPrice,
       quantity,
       avgBuy,
       currentPrice,
@@ -210,13 +217,19 @@ export function HoldingsDonutPanel({ items, currentPrices = {}, onSelect, emptyL
                     <p className="truncate text-sm font-bold text-slate-100 group-hover:text-violet-200">{item.id_stock} - {item.nome_societa}</p>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    Qty {item.quantity.toFixed(6)} | Value {toCurrency(item.marketValue)}
+                    Qty {item.quantity.toFixed(6)} | Value {item.hasCurrentPrice ? toCurrency(item.marketValue) : 'N/A'}
                   </p>
                 </div>
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${item.deltaValue >= 0 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-300'}`}>
-                  <span className="material-symbols-outlined mr-1 text-sm">{item.deltaValue >= 0 ? 'trending_up' : 'trending_down'}</span>
-                  {item.deltaValue >= 0 ? '+' : ''}{item.deltaPct.toFixed(2)}%
-                </span>
+                {item.hasCurrentPrice && item.deltaPct !== null ? (
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${item.deltaValue !== null && item.deltaValue >= 0 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-300'}`}>
+                    <span className="material-symbols-outlined mr-1 text-sm">{item.deltaValue !== null && item.deltaValue >= 0 ? 'trending_up' : 'trending_down'}</span>
+                    {item.deltaValue !== null && item.deltaValue >= 0 ? '+' : ''}{item.deltaPct.toFixed(2)}%
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] font-semibold text-slate-300">
+                    N/A
+                  </span>
+                )}
               </button>
             </AnimatedContent>
           ))

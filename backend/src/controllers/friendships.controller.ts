@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { resolveStoredProfilePhotoUrl } from '../lib/cloudinary';
 import { AuthRequest } from '../types';
 
 const SendFriendRequestSchema = z.object({
@@ -216,7 +217,7 @@ export async function getMyFriendships(req: Request, res: Response): Promise<voi
       return {
         id_persona: counterpart.id_persona,
         username: counterpart.username,
-        photo_url: counterpart.photo_url,
+        photo_url: resolveStoredProfilePhotoUrl(counterpart.photo_url),
         status: row.status,
         direction: row.status === 'Pending' ? (isSender ? 'outgoing' : 'incoming') : 'friend',
         blocked_by_me: row.user_block === sub,

@@ -67,10 +67,13 @@ export function HomePage() {
     if (!root) return;
 
     const targets = Array.from(
-      root.querySelectorAll<HTMLElement>('a, button, article, section, .rounded-xl, .rounded-2xl'),
+      root.querySelectorAll<HTMLElement>('.home-glow-card'),
     ).filter((el) => !el.classList.contains('home-glow-ignore'));
 
-    targets.forEach((el) => el.classList.add('social-glow-card'));
+    if (targets.length === 0) {
+      root.classList.remove('social-glow-scope');
+      return;
+    }
 
     const proximity = 220;
     const fadeDistance = 400;
@@ -143,7 +146,6 @@ export function HomePage() {
       if (rafId !== null) window.cancelAnimationFrame(rafId);
       root.removeEventListener('mousemove', onMouseMove);
       root.removeEventListener('mouseleave', onMouseLeave);
-      targets.forEach((el) => el.classList.remove('social-glow-card'));
       root.classList.remove('social-glow-scope');
     };
   }, []);

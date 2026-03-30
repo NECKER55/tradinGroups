@@ -60,18 +60,21 @@ export function WorkspacePreviewSection() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<number | null>(null);
-  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number | null>>({});
   const [historyPeriodFilter, setHistoryPeriodFilter] = useState<HistoryPeriodFilter>('ALL');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<HistoryTypeFilter>('ALL');
   const [historyStatusFilter, setHistoryStatusFilter] = useState<HistoryStatusFilter>('ALL');
 
-  function pricesToMap(prices: Array<{ id_stock: string; prezzo_attuale: string | null }>): Record<string, number> {
-    const out: Record<string, number> = {};
+  function pricesToMap(prices: Array<{ id_stock: string; prezzo_attuale: string | null }>): Record<string, number | null> {
+    const out: Record<string, number | null> = {};
     for (const row of prices) {
-      const value = Number(row.prezzo_attuale ?? 0);
-      if (Number.isFinite(value) && value > 0) {
-        out[row.id_stock] = value;
+      if (row.prezzo_attuale === null) {
+        out[row.id_stock] = null;
+        continue;
       }
+
+      const value = Number(row.prezzo_attuale);
+      out[row.id_stock] = Number.isFinite(value) ? value : null;
     }
     return out;
   }
@@ -381,23 +384,45 @@ export function WorkspacePreviewSection() {
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
       </div>
 
-      <div className="rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
-        <div className="relative">
-          <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">search</span>
+      <div className="home-glow-card relative w-full overflow-hidden rounded-2xl border border-[#232337] bg-[#11131f]/88 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.38)] backdrop-blur-sm">
+        <div className="pointer-events-none absolute -left-12 -top-16 h-40 w-40 rounded-full bg-violet-500/14 blur-3xl" />
+        <div className="pointer-events-none absolute -right-16 -bottom-16 h-44 w-44 rounded-full bg-fuchsia-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(120%_80%_at_10%_0%,rgba(139,92,246,0.16),transparent_58%)]" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/45 to-transparent" />
+
+        <div className="relative mb-4 min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-300/80">Quick stock search</p>
+          <h3 className="mt-1 text-lg font-bold text-slate-100">Type a ticker or company name</h3>
+          <p className="mt-1 text-xs text-slate-400">Use this search bar to instantly open the stock detail page.</p>
+        </div>
+
+        <div className="relative rounded-2xl border border-[#232337] bg-[#0f0f14]/85 shadow-[0_0_0_1px_rgba(139,92,246,0.06),0_14px_30px_rgba(0,0,0,0.35)] backdrop-blur-sm transition-all focus-within:border-violet-500/70 focus-within:shadow-[0_0_0_1px_rgba(139,92,246,0.18),0_18px_34px_rgba(20,16,32,0.55)]">
+          <span className="material-symbols-outlined pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-xl text-slate-400">search</span>
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search stocks, ETFs..."
-            className="w-full rounded-xl border border-[#1f1f2e] bg-[#0f0f14] py-2.5 pl-10 pr-4 text-sm text-slate-100 outline-none transition-all placeholder:text-slate-500 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/30"
+            placeholder="Search stocks, ETFs, or tickers..."
+            className="w-full rounded-2xl bg-transparent py-3.5 pl-12 pr-24 text-base text-slate-100 outline-none placeholder:text-slate-500"
           />
+          {searchTerm.trim() ? (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-600/50 bg-[#171721] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300 transition-colors hover:border-violet-400/40 hover:text-violet-200"
+            >
+              Clear
+            </button>
+          ) : null}
         </div>
+
+        <p className="mt-2 text-[11px] text-slate-500">Tip: try symbols like NVDA or a full company name.</p>
 
         {searchLoading ? <p className="mt-3 text-xs text-slate-400">Searching...</p> : null}
         {searchError ? <p className="mt-3 text-xs text-rose-400">{searchError}</p> : null}
 
         {searchTerm.trim() && !searchLoading && !searchError ? (
-          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+          <div className="mt-3 max-h-56 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
             {searchResults.length === 0 ? (
               <p className="text-xs text-slate-400">No stocks found.</p>
             ) : (
@@ -405,13 +430,13 @@ export function WorkspacePreviewSection() {
                 <div
                   key={stock.id_stock}
                   onClick={() => navigate(buildPersonalStockHref(stock.id_stock), { state: { stock } })}
-                  className="flex cursor-pointer items-center justify-between rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
+                  className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-lg border border-[#232337] bg-[#0f0f14] px-3 py-2 transition-colors hover:bg-[#1a1a27]"
                 >
-                  <div>
-                    <p className="text-sm font-bold text-slate-100">{stock.id_stock} - {stock.nome_societa}</p>
-                    <p className="text-[10px] uppercase text-slate-500">{stock.settore}</p>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-100">{stock.id_stock} - {stock.nome_societa}</p>
+                    <p className="truncate text-[10px] uppercase text-slate-500">{stock.settore}</p>
                   </div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-300">Open</span>
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-violet-300">Open</span>
                 </div>
               ))
             )}

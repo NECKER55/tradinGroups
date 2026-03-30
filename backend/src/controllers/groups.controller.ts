@@ -183,6 +183,18 @@ async function requireMembership(
   return membership;
 }
 
+function requesterIsSuperuser(req: Request): boolean {
+  return (req as Partial<AuthRequest>).user?.is_superuser === true;
+}
+
+function hasGroupAdminPowers(
+  req: Request,
+  membership: { ruolo: string } | null,
+): boolean {
+  if (!membership) return false;
+  return requesterIsSuperuser(req) || membership.ruolo === 'Owner' || membership.ruolo === 'Admin';
+}
+
 function getRequesterId(req: Request): number | null {
   return (req as Partial<AuthRequest>).user?.sub ?? null;
 }
@@ -418,7 +430,7 @@ export async function inviteToGroup(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  if (!['Owner', 'Admin'].includes(actorMembership.ruolo)) {
+  if (!hasGroupAdminPowers(req, actorMembership)) {
     res.status(403).json({
       error: 'INSUFFICIENT_ROLE',
       message: 'Solo Owner o Admin possono invitare utenti.',
@@ -497,7 +509,7 @@ export async function cancelSentGroupInvite(req: Request, res: Response): Promis
     return;
   }
 
-  if (!['Owner', 'Admin'].includes(actorMembership.ruolo)) {
+  if (!hasGroupAdminPowers(req, actorMembership)) {
     res.status(403).json({
       error: 'INSUFFICIENT_ROLE',
       message: 'Solo Owner o Admin possono annullare inviti pendenti.',
@@ -550,7 +562,7 @@ export async function updateGroupBudget(req: Request, res: Response): Promise<vo
     return;
   }
 
-  if (!['Owner', 'Admin'].includes(actorMembership.ruolo)) {
+  if (!hasGroupAdminPowers(req, actorMembership)) {
     res.status(403).json({
       error: 'INSUFFICIENT_ROLE',
       message: 'Solo Owner o Admin possono modificare il budget.',
@@ -705,7 +717,18 @@ export async function removeGroupMember(req: Request, res: Response): Promise<vo
     return;
   }
 
-  if (actorMembership.ruolo === 'Admin' && targetMembership.ruolo !== 'User') {
+  const actorCanAdminister = hasGroupAdminPowers(req, actorMembership);
+  const actorIsOwner = actorMembership.ruolo === 'Owner';
+
+  if (!actorCanAdminister) {
+    res.status(403).json({
+      error: 'INSUFFICIENT_ROLE',
+      message: 'Solo Owner o Admin possono espellere membri.',
+    });
+    return;
+  }
+
+  if (!actorIsOwner && targetMembership.ruolo !== 'User') {
     res.status(403).json({
       error: 'ADMIN_CAN_EXPEL_ONLY_USER',
       message: 'Un admin puo espellere solo utenti con ruolo User.',
@@ -713,18 +736,10 @@ export async function removeGroupMember(req: Request, res: Response): Promise<vo
     return;
   }
 
-  if (actorMembership.ruolo === 'Owner' && !['Admin', 'User'].includes(targetMembership.ruolo)) {
+  if (actorIsOwner && !['Admin', 'User'].includes(targetMembership.ruolo)) {
     res.status(403).json({
       error: 'INVALID_TARGET_ROLE',
       message: 'L\'owner puo espellere solo Admin o User.',
-    });
-    return;
-  }
-
-  if (!['Owner', 'Admin'].includes(actorMembership.ruolo)) {
-    res.status(403).json({
-      error: 'INSUFFICIENT_ROLE',
-      message: 'Solo Owner o Admin possono espellere membri.',
     });
     return;
   }
@@ -1574,7 +1589,7 @@ export async function updateGroupName(req: Request, res: Response): Promise<void
   }
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
-  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
+  if (!hasGroupAdminPowers(req, membership)) {
     res.status(403).json({
       error: 'INSUFFICIENT_ROLE',
       message: 'Solo Owner o Admin possono modificare il nome del gruppo.',
@@ -1659,7 +1674,7 @@ export async function updateGroupDescription(req: Request, res: Response): Promi
   }
 
   const membership = await getMembershipOrNull(id_gruppo, sub);
-  if (!membership || !['Owner', 'Admin'].includes(membership.ruolo)) {
+  if (!hasGroupAdminPowers(req, membership)) {
     res.status(403).json({
       error: 'INSUFFICIENT_ROLE',
       message: 'Solo Owner o Admin possono modificare la descrizione del gruppo.',

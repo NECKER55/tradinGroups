@@ -13,6 +13,29 @@ export type ProcessPendingOrdersResult = {
   executedOrders: number;
 };
 
+async function syncCurrentStockPrices(quotes: Map<string, number>): Promise<void> {
+  if (quotes.size === 0) return;
+
+  const updates: Prisma.PrismaPromise<unknown>[] = [];
+
+  for (const [id_stock, price] of quotes.entries()) {
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    updates.push(
+      prisma.stock.updateMany({
+        where: { id_stock },
+        data: {
+          prezzo_attuale: new Prisma.Decimal(price.toFixed(6)),
+        },
+      }),
+    );
+  }
+
+  if (updates.length > 0) {
+    await prisma.$transaction(updates);
+  }
+}
+
 export async function processPendingOrders(): Promise<ProcessPendingOrdersResult> {
   if (isProcessing) {
     return {
@@ -71,6 +94,9 @@ export async function processPendingOrders(): Promise<ProcessPendingOrdersResult
     for (const item of portfolioTickers) tickers.add(item.id_stock);
 
     const quotes = await fetchQuotesForTickers([...tickers]);
+
+    // Allinea sempre il prezzo corrente su stock quando interroghiamo Finnhub.
+    await syncCurrentStockPrices(quotes);
 
     let executedOrders = 0;
 
