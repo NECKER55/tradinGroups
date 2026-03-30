@@ -1,8 +1,8 @@
 name: Trading Engine Cron
 on:
   schedule:
-    - cron: '*/5 * * * *' # Scatta ogni 5 minuti, 24/7
-  workflow_dispatch: # Ti permette di avviarlo a mano per testare
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   ping-engine:
@@ -10,5 +10,5 @@ jobs:
     steps:
       - name: Call Trading Engine API
         run: |
-          curl -X POST https://tuo-backend.onrender.com/api/jobs/process-orders \
-          -H "x-cron-key: ${{ secrets.CRON_SECRET }}
+          curl -X POST "https://finapp-backend-d2lm.onrender.com/api/jobs/process-orders" \
+          -H "x-cron-key: ${{ secrets.CRON_SECRET }}"

@@ -1408,64 +1408,69 @@ export async function searchGroupsByName(req: Request, res: Response): Promise<v
   }
 
   const requesterId = getRequesterId(req);
-  const term = parsed.data.q.toLowerCase();
+  const term = parsed.data.q;
   const limit = parsed.data.limit;
 
-  const isMemberSelect = requesterId
-    ? Prisma.sql`
-        EXISTS (
-          SELECT 1
-          FROM membro_gruppo mg
-          WHERE mg.id_gruppo = g.id_gruppo
-            AND mg.id_persona = ${requesterId}
-        )
-      `
-    : Prisma.sql`false`;
+  const where: Prisma.GruppoWhereInput = {
+    nome: {
+      startsWith: term,
+      mode: 'insensitive',
+    },
+    ...(requesterId
+      ? {
+          OR: [
+            { privacy: 'Public' },
+            {
+              membri: {
+                some: {
+                  id_persona: requesterId,
+                },
+              },
+            },
+          ],
+        }
+      : {
+          privacy: 'Public',
+        }),
+  };
 
-  const visibilityFilter = requesterId
-    ? Prisma.sql`
-        (
-          g.privacy = 'Public'
-          OR EXISTS (
-            SELECT 1
-            FROM membro_gruppo mgv
-            WHERE mgv.id_gruppo = g.id_gruppo
-              AND mgv.id_persona = ${requesterId}
-          )
-        )
-      `
-    : Prisma.sql`g.privacy = 'Public'`;
-
-  const groups = await prisma.$queryRaw<Array<{
-    id_gruppo: number;
-    nome: string;
-    privacy: 'Public' | 'Private';
-    photo_url: string | null;
-    descrizione: string | null;
-    budget_iniziale: Prisma.Decimal;
-    is_member: boolean;
-  }>>(Prisma.sql`
-    SELECT
-      g.id_gruppo,
-      g.nome,
-      g.privacy,
-      g.photo_url,
-      g.descrizione,
-      g.budget_iniziale,
-      ${isMemberSelect} AS is_member
-    FROM gruppo g
-    WHERE lower(g.nome) LIKE ${`${term}%`}
-      AND ${visibilityFilter}
-    ORDER BY g.nome ASC
-    LIMIT ${limit}
-  `);
+  const groups = await prisma.gruppo.findMany({
+    where,
+    select: {
+      id_gruppo: true,
+      nome: true,
+      privacy: true,
+      photo_url: true,
+      descrizione: true,
+      budget_iniziale: true,
+      membri: requesterId
+        ? {
+            where: {
+              id_persona: requesterId,
+            },
+            select: {
+              id_persona: true,
+            },
+          }
+        : false,
+    },
+    orderBy: {
+      nome: 'asc',
+    },
+    take: limit,
+  });
 
   res.json({
     q: parsed.data.q,
     count: groups.length,
     results: groups.map((group) => ({
-      ...group,
+      id_gruppo: group.id_gruppo,
+      nome: group.nome,
+      privacy: group.privacy,
+      photo_url: group.photo_url,
+      descrizione: group.descrizione,
       budget_iniziale: group.budget_iniziale.toString(),
+      is_member: requesterId ? group.membri.length > 0 : false,
     })),
   });
 }

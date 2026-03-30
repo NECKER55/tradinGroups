@@ -154,35 +154,38 @@ export async function register(req: Request, res: Response): Promise<void> {
   const username = parsed.data.username.trim();
   const { password } = parsed.data;
 
-  const [existingByEmailRows, existingByUsernameRows] = await Promise.all([
-    prisma.$queryRaw<Array<{
-      id_persona: number;
-      username: string;
-      is_banned: boolean;
-      is_deleted: boolean;
-      is_superuser: boolean;
-      password: string;
-    }>>(Prisma.sql`
-      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
-      FROM credenziali c
-      JOIN persona p ON p.id_persona = c.id_persona
-      WHERE c.email = ${normalizedEmail}
-      LIMIT 1
-    `),
-    prisma.$queryRaw<Array<{
-      id_persona: number;
-      is_banned: boolean;
-      is_deleted: boolean;
-    }>>(Prisma.sql`
-      SELECT id_persona, is_banned, is_deleted
-      FROM persona
-      WHERE username = ${username}
-      LIMIT 1
-    `),
+  const [existingByEmailRecord, existingByUsername] = await Promise.all([
+    prisma.credenziali.findUnique({
+      where: { email: normalizedEmail },
+      select: {
+        password: true,
+        persona: {
+          select: {
+            id_persona: true,
+            username: true,
+            is_banned: true,
+            is_deleted: true,
+            is_superuser: true,
+          },
+        },
+      },
+    }),
+    prisma.persona.findUnique({
+      where: { username },
+      select: {
+        id_persona: true,
+        is_banned: true,
+        is_deleted: true,
+      },
+    }),
   ]);
 
-  const existingByEmail = existingByEmailRows[0] ?? null;
-  const existingByUsername = existingByUsernameRows[0] ?? null;
+  const existingByEmail = existingByEmailRecord
+    ? {
+        ...existingByEmailRecord.persona,
+        password: existingByEmailRecord.password,
+      }
+    : null;
 
   if (existingByEmail?.is_banned) {
     res.status(403).json({
@@ -214,12 +217,13 @@ export async function register(req: Request, res: Response): Promise<void> {
     await prisma.$transaction(async (tx) => {
       await autoLeaveAllGroupsForPersona(tx, existingByEmail.id_persona);
 
-      await tx.$executeRaw(Prisma.sql`
-        UPDATE persona
-        SET is_deleted = false,
-            photo_url = NULL
-        WHERE id_persona = ${existingByEmail.id_persona}
-      `);
+      await tx.persona.update({
+        where: { id_persona: existingByEmail.id_persona },
+        data: {
+          is_deleted: false,
+          photo_url: null,
+        },
+      });
 
       if (!isSamePassword) {
         await tx.credenziali.update({
@@ -365,37 +369,71 @@ export async function login(req: Request, res: Response): Promise<void> {
   const identifier = parsed.data.identifier.trim();
   const password = parsed.data.password;
 
-  const rows = identifier.includes('@')
-    ? await prisma.$queryRaw<Array<{
-      id_persona: number;
-      username: string;
-      is_banned: boolean;
-      is_deleted: boolean;
-      is_superuser: boolean;
-      password: string;
-    }>>(Prisma.sql`
-      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
-      FROM credenziali c
-      JOIN persona p ON p.id_persona = c.id_persona
-      WHERE c.email = ${identifier.toLowerCase()}
-      LIMIT 1
-    `)
-    : await prisma.$queryRaw<Array<{
-      id_persona: number;
-      username: string;
-      is_banned: boolean;
-      is_deleted: boolean;
-      is_superuser: boolean;
-      password: string;
-    }>>(Prisma.sql`
-      SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, p.is_superuser, c.password
-      FROM persona p
-      JOIN credenziali c ON c.id_persona = p.id_persona
-      WHERE LOWER(p.username) = LOWER(${identifier})
-      LIMIT 1
-    `);
+  let creds: {
+    id_persona: number;
+    username: string;
+    is_banned: boolean;
+    is_deleted: boolean;
+    is_superuser: boolean;
+    password: string;
+  } | null = null;
 
-  const creds = rows[0] ?? null;
+  if (identifier.includes('@')) {
+    const foundByEmail = await prisma.credenziali.findUnique({
+      where: { email: identifier.toLowerCase() },
+      select: {
+        password: true,
+        persona: {
+          select: {
+            id_persona: true,
+            username: true,
+            is_banned: true,
+            is_deleted: true,
+            is_superuser: true,
+          },
+        },
+      },
+    });
+
+    if (foundByEmail) {
+      creds = {
+        ...foundByEmail.persona,
+        password: foundByEmail.password,
+      };
+    }
+  } else {
+    const foundByUsername = await prisma.persona.findFirst({
+      where: {
+        username: {
+          equals: identifier,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id_persona: true,
+        username: true,
+        is_banned: true,
+        is_deleted: true,
+        is_superuser: true,
+        credenziali: {
+          select: {
+            password: true,
+          },
+        },
+      },
+    });
+
+    if (foundByUsername?.credenziali) {
+      creds = {
+        id_persona: foundByUsername.id_persona,
+        username: foundByUsername.username,
+        is_banned: foundByUsername.is_banned,
+        is_deleted: foundByUsername.is_deleted,
+        is_superuser: foundByUsername.is_superuser,
+        password: foundByUsername.credenziali.password,
+      };
+    }
+  }
 
   // Generic message for security (do not disclose whether email or password is wrong)
   const invalid = () =>
@@ -464,20 +502,16 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     const payload = verifyRefreshToken(token);
 
     // Verifica che l'utente esista ancora e non sia bannato
-    const rows = await prisma.$queryRaw<Array<{
-      id_persona: number;
-      username: string;
-      is_banned: boolean;
-      is_deleted: boolean;
-      is_superuser: boolean;
-    }>>(Prisma.sql`
-      SELECT id_persona, username, is_banned, is_deleted, is_superuser
-      FROM persona
-      WHERE id_persona = ${payload.sub}
-      LIMIT 1
-    `);
-
-    const persona = rows[0] ?? null;
+    const persona = await prisma.persona.findUnique({
+      where: { id_persona: payload.sub },
+      select: {
+        id_persona: true,
+        username: true,
+        is_banned: true,
+        is_deleted: true,
+        is_superuser: true,
+      },
+    });
 
     if (!persona || persona.is_banned || persona.is_deleted) {
       if (persona?.id_persona) {
@@ -515,23 +549,22 @@ export async function logout(_req: Request, res: Response): Promise<void> {
 export async function me(req: Request, res: Response): Promise<void> {
   const { sub } = (req as AuthRequest).user;
 
-  const rows = await prisma.$queryRaw<Array<{
-    id_persona: number;
-    username: string;
-    photo_url: string | null;
-    is_superuser: boolean;
-    is_banned: boolean;
-    is_deleted: boolean;
-    email: string | null;
-  }>>(Prisma.sql`
-    SELECT p.id_persona, p.username, p.photo_url, p.is_superuser, p.is_banned, p.is_deleted, c.email
-    FROM persona p
-    LEFT JOIN credenziali c ON c.id_persona = p.id_persona
-    WHERE p.id_persona = ${sub}
-    LIMIT 1
-  `);
-
-  const persona = rows[0] ?? null;
+  const persona = await prisma.persona.findUnique({
+    where: { id_persona: sub },
+    select: {
+      id_persona: true,
+      username: true,
+      photo_url: true,
+      is_superuser: true,
+      is_banned: true,
+      is_deleted: true,
+      credenziali: {
+        select: {
+          email: true,
+        },
+      },
+    },
+  });
 
   if (!persona) {
     res.status(404).json({ error: 'NOT_FOUND', message: 'User not found.' });
@@ -558,7 +591,7 @@ export async function me(req: Request, res: Response): Promise<void> {
     photo_url: resolveStoredProfilePhotoUrl(persona.photo_url),
     is_superuser: persona.is_superuser,
     is_banned: persona.is_banned,
-    email: persona.email ?? null,
+    email: persona.credenziali?.email ?? null,
   });
 }
 
@@ -637,21 +670,20 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
     return;
   }
 
-  const targetRows = await prisma.$queryRaw<Array<{
-    id_persona: number;
-    username: string;
-    is_banned: boolean;
-    is_deleted: boolean;
-    email: string | null;
-  }>>(Prisma.sql`
-    SELECT p.id_persona, p.username, p.is_banned, p.is_deleted, c.email
-    FROM persona p
-    LEFT JOIN credenziali c ON c.id_persona = p.id_persona
-    WHERE p.id_persona = ${targetUserId}
-    LIMIT 1
-  `);
-
-  const targetUser = targetRows[0] ?? null;
+  const targetUser = await prisma.persona.findUnique({
+    where: { id_persona: targetUserId },
+    select: {
+      id_persona: true,
+      username: true,
+      is_banned: true,
+      is_deleted: true,
+      credenziali: {
+        select: {
+          email: true,
+        },
+      },
+    },
+  });
 
   if (!targetUser) {
     res.status(404).json({
@@ -661,7 +693,7 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
     return;
   }
 
-  if (!targetUser.email) {
+  if (!targetUser.credenziali?.email) {
     res.status(409).json({
       error: 'ACCOUNT_ALREADY_DELETED',
       message: 'This account has already been removed.',
@@ -680,12 +712,13 @@ export async function deleteUserAccount(req: Request, res: Response): Promise<vo
   await prisma.$transaction(async (tx) => {
     await autoLeaveAllGroupsForPersona(tx, targetUserId);
 
-    await tx.$executeRaw(Prisma.sql`
-      UPDATE persona
-      SET is_deleted = true,
-          photo_url = NULL
-      WHERE id_persona = ${targetUserId}
-    `);
+    await tx.persona.update({
+      where: { id_persona: targetUserId },
+      data: {
+        is_deleted: true,
+        photo_url: null,
+      },
+    });
   });
 
   if (isSelf) {
@@ -713,18 +746,14 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
   const { sub, is_superuser } = (req as AuthRequest).user;
   const newUsername = parsed.data.username;
 
-  const rows = await prisma.$queryRaw<Array<{
-    id_persona: number;
-    username: string;
-    username_changed_at: Date | null;
-  }>>(Prisma.sql`
-    SELECT id_persona, username, username_changed_at
-    FROM persona
-    WHERE id_persona = ${sub}
-    LIMIT 1
-  `);
-
-  const persona = rows[0] ?? null;
+  const persona = await prisma.persona.findUnique({
+    where: { id_persona: sub },
+    select: {
+      id_persona: true,
+      username: true,
+      username_changed_at: true,
+    },
+  });
 
   if (!persona) {
     res.status(404).json({
@@ -761,6 +790,7 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
       where: { id_persona: sub },
       data: {
         username: newUsername,
+        username_changed_at: new Date(),
       },
       select: {
         id_persona: true,
@@ -770,12 +800,6 @@ export async function changeMyUsername(req: Request, res: Response): Promise<voi
         is_banned: true,
       },
     });
-
-    await prisma.$executeRaw(Prisma.sql`
-      UPDATE persona
-      SET username_changed_at = NOW()
-      WHERE id_persona = ${sub}
-    `);
 
     const payload = {
       sub: updated.id_persona,
@@ -1007,43 +1031,64 @@ export async function adminListUsers(req: Request, res: Response): Promise<void>
   const includeAll = Boolean(parsed.data.include_all);
   const limit = includeAll ? 500 : (parsed.data.limit ?? 20);
 
-  const whereClause = queryText
-    ? Prisma.sql`WHERE p.username ILIKE ${`${queryText}%`} OR c.email ILIKE ${`${queryText}%`}`
-    : Prisma.sql``;
+  const where: Prisma.PersonaWhereInput | undefined = queryText
+    ? {
+        OR: [
+          {
+            username: {
+              startsWith: queryText,
+              mode: 'insensitive',
+            },
+          },
+          {
+            credenziali: {
+              is: {
+                email: {
+                  startsWith: queryText,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          },
+        ],
+      }
+    : undefined;
 
-  const [rows, totalRows] = await Promise.all([
-    prisma.$queryRaw<Array<{
-      id_persona: number;
-      username: string;
-      email: string | null;
-      photo_url: string | null;
-      is_superuser: boolean;
-      is_banned: boolean;
-      is_deleted: boolean;
-    }>>(Prisma.sql`
-      SELECT p.id_persona, p.username, c.email, p.photo_url, p.is_superuser, p.is_banned, p.is_deleted
-      FROM persona p
-      LEFT JOIN credenziali c ON c.id_persona = p.id_persona
-      ${whereClause}
-      ORDER BY p.id_persona DESC
-      LIMIT ${limit}
-    `),
-    prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS total
-      FROM persona p
-      LEFT JOIN credenziali c ON c.id_persona = p.id_persona
-      ${whereClause}
-    `),
+  const [rows, total] = await Promise.all([
+    prisma.persona.findMany({
+      where,
+      select: {
+        id_persona: true,
+        username: true,
+        photo_url: true,
+        is_superuser: true,
+        is_banned: true,
+        is_deleted: true,
+        credenziali: {
+          select: {
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        id_persona: 'desc',
+      },
+      take: limit,
+    }),
+    prisma.persona.count({ where }),
   ]);
-
-  const total = Number(totalRows[0]?.total ?? 0n);
 
   res.json({
     total,
     returned: rows.length,
     users: rows.map((row) => ({
-      ...row,
+      id_persona: row.id_persona,
+      username: row.username,
+      email: row.credenziali?.email ?? null,
       photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
+      is_superuser: row.is_superuser,
+      is_banned: row.is_banned,
+      is_deleted: row.is_deleted,
     })),
   });
 }
@@ -1072,54 +1117,60 @@ export async function adminListGroups(req: Request, res: Response): Promise<void
   const includeAll = Boolean(parsed.data.include_all);
   const limit = includeAll ? 500 : (parsed.data.limit ?? 20);
 
-  const whereClause = queryText
-    ? Prisma.sql`WHERE g.nome ILIKE ${`${queryText}%`} OR COALESCE(g.descrizione, '') ILIKE ${`${queryText}%`}`
-    : Prisma.sql``;
+  const where: Prisma.GruppoWhereInput | undefined = queryText
+    ? {
+        OR: [
+          {
+            nome: {
+              startsWith: queryText,
+              mode: 'insensitive',
+            },
+          },
+          {
+            descrizione: {
+              startsWith: queryText,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      }
+    : undefined;
 
-  const [rows, totalRows] = await Promise.all([
-    prisma.$queryRaw<Array<{
-      id_gruppo: number;
-      nome: string;
-      privacy: 'Public' | 'Private';
-      descrizione: string | null;
-      photo_url: string | null;
-      budget_iniziale: Prisma.Decimal;
-      members_count: bigint;
-    }>>(Prisma.sql`
-      SELECT
-        g.id_gruppo,
-        g.nome,
-        g.privacy,
-        g.descrizione,
-        g.photo_url,
-        g.budget_iniziale,
-        COUNT(mg.id_persona)::bigint AS members_count
-      FROM gruppo g
-      LEFT JOIN membro_gruppo mg ON mg.id_gruppo = g.id_gruppo
-      ${whereClause}
-      GROUP BY g.id_gruppo
-      ORDER BY g.id_gruppo DESC
-      LIMIT ${limit}
-    `),
-    prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS total
-      FROM gruppo g
-      ${queryText
-    ? Prisma.sql`WHERE g.nome ILIKE ${`${queryText}%`} OR COALESCE(g.descrizione, '') ILIKE ${`${queryText}%`}`
-    : Prisma.sql``}
-    `),
+  const [rows, total] = await Promise.all([
+    prisma.gruppo.findMany({
+      where,
+      select: {
+        id_gruppo: true,
+        nome: true,
+        privacy: true,
+        descrizione: true,
+        photo_url: true,
+        budget_iniziale: true,
+        _count: {
+          select: {
+            membri: true,
+          },
+        },
+      },
+      orderBy: {
+        id_gruppo: 'desc',
+      },
+      take: limit,
+    }),
+    prisma.gruppo.count({ where }),
   ]);
-
-  const total = Number(totalRows[0]?.total ?? 0n);
 
   res.json({
     total,
     returned: rows.length,
     groups: rows.map((row) => ({
-      ...row,
-      members_count: Number(row.members_count),
-      budget_iniziale: row.budget_iniziale.toString(),
+      id_gruppo: row.id_gruppo,
+      nome: row.nome,
+      privacy: row.privacy,
+      descrizione: row.descrizione,
       photo_url: resolveStoredProfilePhotoUrl(row.photo_url),
+      budget_iniziale: row.budget_iniziale.toString(),
+      members_count: row._count.membri,
     })),
   });
 }

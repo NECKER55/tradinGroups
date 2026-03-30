@@ -10,5 +10,5 @@ jobs:
     steps:
       - name: Call Valuation API
         run: |
-          curl -X POST https://finapp-backend-d2lm.onrender.com \
+          curl -X POST "https://finapp-backend-d2lm.onrender.com/api/jobs/daily-valuation" \
           -H "x-cron-key: ${{ secrets.CRON_SECRET }}"

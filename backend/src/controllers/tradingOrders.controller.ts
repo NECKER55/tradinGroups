@@ -379,20 +379,26 @@ export async function searchStocksByPrefix(req: Request, res: Response): Promise
     return;
   }
 
-  const term = parsed.data.q.toLowerCase();
+  const term = parsed.data.q;
   const limit = parsed.data.limit;
 
-  const rows = await prisma.$queryRaw<Array<{
-    id_stock: string;
-    nome_societa: string;
-    settore: string;
-  }>>(Prisma.sql`
-    SELECT id_stock, nome_societa, settore
-    FROM stock
-    WHERE lower(nome_societa) LIKE ${`${term}%`}
-    ORDER BY nome_societa ASC
-    LIMIT ${limit}
-  `);
+  const rows = await prisma.stock.findMany({
+    where: {
+      nome_societa: {
+        startsWith: term,
+        mode: 'insensitive',
+      },
+    },
+    select: {
+      id_stock: true,
+      nome_societa: true,
+      settore: true,
+    },
+    orderBy: {
+      nome_societa: 'asc',
+    },
+    take: limit,
+  });
 
   res.json({
     q: parsed.data.q,
@@ -457,70 +463,117 @@ export async function searchPeopleByUsernameOrId(req: Request, res: Response): P
   }
 
   const rawTerm = parsed.data.q.trim();
-  const term = rawTerm.toLowerCase();
   const limit = parsed.data.limit;
   const isNumericPrefix = /^\d+$/.test(rawTerm);
   const requesterId = (req as Partial<AuthRequest>).user?.sub ?? null;
 
-  const requesterBlockedFilter = requesterId
-    ? Prisma.sql`
-        AND NOT EXISTS (
-          SELECT 1
-          FROM amicizia a
-          WHERE (
-            (a.id_persona_1 = p.id_persona AND a.id_persona_2 = ${requesterId})
-            OR (a.id_persona_2 = p.id_persona AND a.id_persona_1 = ${requesterId})
-          )
-          AND a.user_block = p.id_persona
-        )
-      `
-    : Prisma.empty;
+  const whereClauses: Prisma.PersonaWhereInput[] = [
+    {
+      username: {
+        startsWith: rawTerm,
+        mode: 'insensitive',
+      },
+    },
+  ];
 
-  const friendshipSelect = requesterId
-    ? Prisma.sql`
-        EXISTS (
-          SELECT 1
-          FROM amicizia af
-          WHERE (
-            (af.id_persona_1 = p.id_persona AND af.id_persona_2 = ${requesterId})
-            OR (af.id_persona_2 = p.id_persona AND af.id_persona_1 = ${requesterId})
-          )
-          AND af.status = 'Accepted'
-          AND af.user_block IS NULL
-        ) AS is_friend
-      `
-    : Prisma.sql`false AS is_friend`;
+  if (isNumericPrefix) {
+    const maxIdResult = await prisma.persona.aggregate({ _max: { id_persona: true } });
+    const maxId = maxIdResult._max.id_persona ?? 0;
+    const maxDigits = String(Math.max(maxId, Number(rawTerm))).length;
+    const prefixLength = rawTerm.length;
+    const prefixAsNumber = Number(rawTerm);
 
-  const rows = isNumericPrefix
-    ? await prisma.$queryRaw<Array<{
-        id_persona: number;
-        username: string;
-        photo_url: string | null;
-        is_friend: boolean;
-      }>>(Prisma.sql`
-        SELECT p.id_persona, p.username, p.photo_url, ${friendshipSelect}
-        FROM persona p
-        WHERE (
-          lower(p.username) LIKE ${`${term}%`}
-          OR (p.id_persona::text) LIKE ${`${rawTerm}%`}
-        )
-        ${requesterBlockedFilter}
-        ORDER BY p.username ASC
-        LIMIT ${limit}
-      `)
-    : await prisma.$queryRaw<Array<{
-        id_persona: number;
-        username: string;
-        photo_url: string | null;
-        is_friend: boolean;
-      }>>(Prisma.sql`
-        SELECT p.id_persona, p.username, p.photo_url, ${friendshipSelect}
-        FROM persona p
-        WHERE lower(p.username) LIKE ${`${term}%`}
-        ${requesterBlockedFilter}
-        ORDER BY p.username ASC
-        LIMIT ${limit}
-      `);
+    const idRanges: Prisma.IntFilter[] = [];
+
+    for (let extraDigits = 0; extraDigits <= Math.max(0, maxDigits - prefixLength); extraDigits += 1) {
+      const factor = 10 ** extraDigits;
+      idRanges.push({
+        gte: prefixAsNumber * factor,
+        lte: (prefixAsNumber + 1) * factor - 1,
+      });
+    }
+
+    if (idRanges.length > 0) {
+      whereClauses.push({
+        OR: idRanges.map((range) => ({ id_persona: range })),
+      });
+    }
+  }
+
+  const candidateTake = requesterId ? limit * 4 : limit;
+  const candidates = await prisma.persona.findMany({
+    where: {
+      OR: whereClauses,
+    },
+    select: {
+      id_persona: true,
+      username: true,
+      photo_url: true,
+    },
+    orderBy: {
+      username: 'asc',
+    },
+    take: candidateTake,
+  });
+
+  let rows: Array<{
+    id_persona: number;
+    username: string;
+    photo_url: string | null;
+    is_friend: boolean;
+  }> = candidates.map((candidate) => ({
+    ...candidate,
+    is_friend: false,
+  }));
+
+  if (requesterId && candidates.length > 0) {
+    const candidateIds = candidates.map((candidate) => candidate.id_persona);
+
+    const links = await prisma.amicizia.findMany({
+      where: {
+        OR: [
+          {
+            id_persona_1: requesterId,
+            id_persona_2: { in: candidateIds },
+          },
+          {
+            id_persona_2: requesterId,
+            id_persona_1: { in: candidateIds },
+          },
+        ],
+      },
+      select: {
+        id_persona_1: true,
+        id_persona_2: true,
+        status: true,
+        user_block: true,
+      },
+    });
+
+    const blockedByCandidate = new Set<number>();
+    const acceptedFriendships = new Set<number>();
+
+    for (const link of links) {
+      const candidateId = link.id_persona_1 === requesterId ? link.id_persona_2 : link.id_persona_1;
+
+      if (link.user_block === candidateId) {
+        blockedByCandidate.add(candidateId);
+      }
+
+      if (link.status === 'Accepted' && link.user_block == null) {
+        acceptedFriendships.add(candidateId);
+      }
+    }
+
+    rows = candidates
+      .filter((candidate) => !blockedByCandidate.has(candidate.id_persona))
+      .map((candidate) => ({
+        ...candidate,
+        is_friend: acceptedFriendships.has(candidate.id_persona),
+      }));
+  }
+
+  rows = rows.slice(0, limit);
 
   res.json({
     q: parsed.data.q,
