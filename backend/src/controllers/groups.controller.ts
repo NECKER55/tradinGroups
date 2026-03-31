@@ -1916,7 +1916,7 @@ export async function getGroupRanking(req: Request, res: Response): Promise<void
     return;
   }
 
-  const [members, portfolios, latestSnapshot] = await Promise.all([
+  const [members, latestSnapshot] = await Promise.all([
     prisma.membro_Gruppo.findMany({
       where: { id_gruppo },
       include: {
@@ -1929,23 +1929,11 @@ export async function getGroupRanking(req: Request, res: Response): Promise<void
         },
       },
     }),
-    prisma.portafoglio.findMany({
-      where: { id_gruppo },
-      select: {
-        id_persona: true,
-        liquidita: true,
-      },
-    }),
     prisma.storico_Portafoglio.aggregate({
       where: { id_gruppo },
       _max: { data: true },
     }),
   ]);
-
-  const portfolioMap = new Map<number, Prisma.Decimal>();
-  for (const portfolio of portfolios) {
-    portfolioMap.set(portfolio.id_persona, portfolio.liquidita);
-  }
 
   const snapshotDate = latestSnapshot._max.data ?? null;
   const snapshotMap = new Map<number, Prisma.Decimal>();
@@ -1970,7 +1958,6 @@ export async function getGroupRanking(req: Request, res: Response): Promise<void
   const ranking = members
     .map((member) => {
       const total = snapshotMap.get(member.id_persona)
-        ?? portfolioMap.get(member.id_persona)
         ?? new Prisma.Decimal(0);
 
       return {

@@ -53,7 +53,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     route: '/',
     selector: '[data-tutorial-id="home-private-portfolio-chart"]',
     title: 'Portfolio chart',
-    description: 'Track your private portfolio value over time with filters and interactive points.',
+    description: 'Track your private portfolio value over time with filters and interactive points. it will update once a day',
   },
   {
     id: 'home-private-assets',
@@ -116,7 +116,7 @@ const TUTORIAL_STEPS: TutorialStep[] = [
     route: '/tutorial/mock-group',
     selector: '[data-tutorial-id="mock-group-personal-area"]',
     title: 'Group personal trading area',
-    description: 'This mock reproduces the real trading workspace layout used in group scope.',
+    description: 'This mock reproduces the real trading workspace layout used in group scope. It is like your private area but with group-wide performance and holdings. Complitely separrated',
   },
   {
     id: 'mock-group-search',

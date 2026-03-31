@@ -13,6 +13,8 @@ import { startCronJobs } from './jobs/tradingEngine';
 import { startDailyPortfolioValuationJob } from './jobs/portfolioValuation';
 
 const app  = express();
+// Fondamentale per Render e per express-rate-limit
+app.set('trust proxy', 1);
 const PORT = parseInt(process.env.PORT ?? '3000');
 
 const allowedOrigins = new Set(
@@ -86,7 +88,7 @@ const writeLimiter = rateLimit({
   message: methodAwareRateLimitMessage,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/api/jobs/'), // Escludi jobs da rate limit globale, hanno limiti specifici più stretti
 });
 
 app.use(readLimiter);

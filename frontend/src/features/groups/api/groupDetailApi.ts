@@ -64,7 +64,7 @@ export interface GroupWorkspaceTransaction {
   id_portafoglio: number;
   id_stock: string;
   tipo: 'Buy' | 'Sell';
-  stato: 'Pending' | 'Executed' | 'Failed';
+  stato: 'Pending' | 'Executed' | 'Aborted';
   prezzo_esecuzione: string;
   importo_investito: string | null;
   quantita_azioni: string | null;

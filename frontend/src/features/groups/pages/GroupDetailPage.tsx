@@ -37,14 +37,14 @@ import {
   updateGroupPhoto,
   removeGroupPhoto,
 } from '../api/groupDetailApi';
-import { getStocksCurrentPrices, StockSearchItem, searchStocks } from '../../home/api/personalWorkspaceApi';
+import { getPortfolioHoldings, getStocksCurrentPrices, StockSearchItem, searchStocks } from '../../home/api/personalWorkspaceApi';
 import { getMySentGroupInvites, PeopleSearchResult, searchPeople } from '../../social/api/socialHubApi';
 
 type WorkspaceTab = 'assets' | 'history' | 'watchlist';
 type BudgetAction = 'deposit' | 'withdraw';
 type HistoryPeriodFilter = 'ALL' | '7D' | '30D' | '90D' | '365D';
 type HistoryTypeFilter = 'ALL' | 'Buy' | 'Sell';
-type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed' | 'Failed';
+type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed' | 'Aborted';
 
 type PendingAction =
   | { kind: 'leave'; newOwnerId: number | null }
@@ -140,6 +140,11 @@ export function GroupDetailPage() {
   const [deleteGroupPhraseInput, setDeleteGroupPhraseInput] = useState('');
   const [deleteGroupAcknowledge, setDeleteGroupAcknowledge] = useState(false);
   const [deletingGroup, setDeletingGroup] = useState(false);
+  const [selectedRankingMemberId, setSelectedRankingMemberId] = useState<number | null>(null);
+  const [selectedMemberHoldings, setSelectedMemberHoldings] = useState<GroupWorkspaceHolding[]>([]);
+  const [selectedMemberPrices, setSelectedMemberPrices] = useState<Record<string, number>>({});
+  const [selectedMemberLoading, setSelectedMemberLoading] = useState(false);
+  const [selectedMemberError, setSelectedMemberError] = useState<string | null>(null);
 
   const parsedGroupId = Number(groupId);
 
@@ -455,16 +460,41 @@ export function GroupDetailPage() {
       root.removeEventListener('mouseleave', onMouseLeave);
       root.classList.remove('social-glow-scope');
     };
-  }, []);
+  }, [activeTab, canAccessWorkspace, loading, ranking.length, selectedRankingMemberId, settingsOpen]);
 
   useEffect(() => {
-    if (!settingsOpen && !pendingAction && !groupPhotoCropOpen && !deleteGroupConfirmOpen) return;
+    if (!selectedRankingMemberId) return;
+
+    const blockWheel = (event: Event) => {
+      event.preventDefault();
+    };
+
+    const blockKeys = (event: KeyboardEvent) => {
+      const blocked = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'];
+      if (blocked.includes(event.key)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', blockWheel, { passive: false });
+    window.addEventListener('touchmove', blockWheel, { passive: false });
+    window.addEventListener('keydown', blockKeys, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', blockWheel as EventListener);
+      window.removeEventListener('touchmove', blockWheel as EventListener);
+      window.removeEventListener('keydown', blockKeys);
+    };
+  }, [selectedRankingMemberId]);
+
+  useEffect(() => {
+    if (!settingsOpen && !pendingAction && !groupPhotoCropOpen && !deleteGroupConfirmOpen && !selectedRankingMemberId) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [deleteGroupConfirmOpen, groupPhotoCropOpen, pendingAction, settingsOpen]);
+  }, [deleteGroupConfirmOpen, groupPhotoCropOpen, pendingAction, selectedRankingMemberId, settingsOpen]);
 
   const totalWealth = workspaceHistory.length
     ? toNumber(workspaceHistory[workspaceHistory.length - 1].valore_totale)
@@ -510,8 +540,74 @@ export function GroupDetailPage() {
   const rankingAvatarRefreshKey = useMemo(() => Date.now(), [ranking]);
 
   const memberIdsSet = useMemo(() => new Set(members.map((m) => m.id_persona)), [members]);
+  const selectedRankingMember = useMemo(
+    () => ranking.find((item) => item.id_persona === selectedRankingMemberId) ?? null,
+    [ranking, selectedRankingMemberId],
+  );
+  const selectedGroupMember = useMemo(
+    () => members.find((item) => item.id_persona === selectedRankingMemberId) ?? null,
+    [members, selectedRankingMemberId],
+  );
+  const selectedMemberPortfolioId = selectedGroupMember?.id_portafoglio ?? null;
   const isDeleteGroupNameConfirmed = deleteGroupNameInput.trim() === (group?.nome ?? '');
   const isDeleteGroupPhraseConfirmed = deleteGroupPhraseInput.trim() === 'DELETE GROUP';
+
+  useEffect(() => {
+    if (!selectedRankingMemberId) {
+      setSelectedMemberHoldings([]);
+      setSelectedMemberPrices({});
+      setSelectedMemberError(null);
+      setSelectedMemberLoading(false);
+      return;
+    }
+
+    if (!selectedRankingMember || !selectedMemberPortfolioId) {
+      setSelectedMemberHoldings([]);
+      setSelectedMemberPrices({});
+      setSelectedMemberError('No portfolio data available for this member.');
+      setSelectedMemberLoading(false);
+      return;
+    }
+
+    const portfolioId = selectedMemberPortfolioId;
+
+    let active = true;
+
+    async function loadSelectedMemberPortfolio() {
+      setSelectedMemberLoading(true);
+      setSelectedMemberError(null);
+      try {
+        const holdingsRes = await getPortfolioHoldings(portfolioId);
+        if (!active) return;
+
+        setSelectedMemberHoldings(holdingsRes.holdings);
+
+        const pricesRes = await getStocksCurrentPrices(holdingsRes.holdings.map((h) => h.id_stock));
+        if (!active) return;
+
+        setSelectedMemberPrices(pricesToMap(pricesRes.prices));
+      } catch (err) {
+        if (!active) return;
+        setSelectedMemberHoldings([]);
+        setSelectedMemberPrices({});
+        setSelectedMemberError(err instanceof Error ? err.message : 'Unable to load member portfolio.');
+      } finally {
+        if (active) setSelectedMemberLoading(false);
+      }
+    }
+
+    void loadSelectedMemberPortfolio();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedMemberPortfolioId, selectedRankingMember, selectedRankingMemberId]);
+
+  useEffect(() => {
+    if (!selectedRankingMemberId) return;
+    if (ranking.some((row) => row.id_persona === selectedRankingMemberId)) return;
+    setSelectedRankingMemberId(null);
+  }, [ranking, selectedRankingMemberId]);
 
   function toggleSelectMember(idPersona: number) {
     setSelectedMemberIds((prev) => (prev.includes(idPersona)
@@ -880,7 +976,11 @@ export function GroupDetailPage() {
                         </tr>
                       ) : (
                         ranking.map((member) => (
-                          <tr key={member.id_persona} className="bg-white/[0.02] transition-colors hover:bg-violet-500/[0.07]">
+                          <tr
+                            key={member.id_persona}
+                            onClick={() => setSelectedRankingMemberId((prev) => (prev === member.id_persona ? null : member.id_persona))}
+                            className={`cursor-pointer bg-white/[0.02] transition-colors hover:bg-violet-500/[0.07] ${selectedRankingMemberId === member.id_persona ? 'bg-violet-500/[0.11]' : ''}`}
+                          >
                             <td className="px-6 py-4">
                               <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-violet-400/30 bg-violet-500/12 text-xs font-black text-violet-200">
                                 {String(member.posizione).padStart(2, '0')}
@@ -914,6 +1014,7 @@ export function GroupDetailPage() {
                   </table>
                 </div>
               </div>
+
             </section>
 
             {canAccessWorkspace ? (
@@ -1119,7 +1220,7 @@ export function GroupDetailPage() {
                               <option value="ALL">All</option>
                               <option value="Pending">Pending</option>
                               <option value="Executed">Executed</option>
-                              <option value="Failed">Failed</option>
+                              <option value="Aborted">Aborted</option>
                             </select>
                           </label>
                         </div>
@@ -1204,6 +1305,108 @@ export function GroupDetailPage() {
           </>
         ) : null}
       </div>
+
+      <AnimatePresence>
+        {selectedRankingMember ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[112] flex items-center justify-center overflow-hidden bg-black/70 p-4 md:p-6"
+            onClick={() => setSelectedRankingMemberId(null)}
+          >
+            <motion.section
+              initial={{ opacity: 0, y: 20, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.99 }}
+              transition={{ duration: 0.24, ease: 'easeOut' }}
+              className="group-glow-card relative w-full max-w-[1180px] overflow-hidden rounded-2xl border border-[#232337] bg-[#11131f]/90 p-5 shadow-[0_24px_52px_rgba(0,0,0,0.46)] backdrop-blur-sm"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="pointer-events-none absolute -left-12 -top-16 h-40 w-40 rounded-full bg-violet-500/14 blur-3xl" />
+              <div className="pointer-events-none absolute -right-16 -bottom-16 h-44 w-44 rounded-full bg-fuchsia-500/10 blur-3xl" />
+              <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(120%_80%_at_10%_0%,rgba(139,92,246,0.16),transparent_58%)]" />
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/45 to-transparent" />
+
+              <div className="relative flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full border border-violet-500/35 bg-[#1a1d2d] text-base font-black text-violet-200">
+                    {resolveUserPhotoUrl(selectedRankingMember.photo_url, 128) ? (
+                      <img
+                        src={resolveUserPhotoUrl(selectedRankingMember.photo_url, 128) ?? ''}
+                        alt={selectedRankingMember.username}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : avatarFallback(selectedRankingMember.username)}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-300/80">Member inspection</p>
+                    <p className="mt-1 text-lg font-black text-slate-100">{selectedRankingMember.username}</p>
+                    <p className="mt-1 text-xs text-slate-400">Detailed profile and current portfolio allocation.</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedRankingMemberId(null)}
+                  className="rounded-lg border border-[#2a2b40] bg-[#141624] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-200 transition-colors hover:border-violet-400/40 hover:text-violet-200"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="relative mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+                <div className="group-glow-card rounded-xl border border-[#24263a] bg-[#10121e]/92 p-4 shadow-[0_0_0_1px_rgba(139,92,246,0.08)] backdrop-blur-sm">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-300/75">Profile</p>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#222436] bg-[#0f111c] px-3 py-2">
+                      <span className="text-slate-400">User ID</span>
+                      <span className="font-semibold text-slate-100">{selectedRankingMember.id_persona}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#222436] bg-[#0f111c] px-3 py-2">
+                      <span className="text-slate-400">Rank</span>
+                      <span className="font-semibold text-violet-200">#{selectedRankingMember.posizione}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#222436] bg-[#0f111c] px-3 py-2">
+                      <span className="text-slate-400">Role</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${roleBadgeClass(selectedRankingMember.ruolo)}`}>
+                        {selectedRankingMember.ruolo}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#222436] bg-[#0f111c] px-3 py-2">
+                      <span className="text-slate-400">Portfolio Value</span>
+                      <span className="font-semibold text-slate-100">{toCurrency(toNumber(selectedRankingMember.valore_totale))}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#222436] bg-[#0f111c] px-3 py-2">
+                      <span className="text-slate-400">Cash</span>
+                      <span className="font-semibold text-slate-100">
+                        {selectedGroupMember?.portfolio_liquidita ? toCurrency(toNumber(selectedGroupMember.portfolio_liquidita)) : '--'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="group-glow-card rounded-xl border border-[#24263a] bg-[#10121e]/92 p-3 shadow-[0_0_0_1px_rgba(139,92,246,0.08)] backdrop-blur-sm">
+                  {selectedMemberLoading ? (
+                    <p className="px-2 py-6 text-sm text-slate-400">Loading member portfolio...</p>
+                  ) : null}
+                  {selectedMemberError ? (
+                    <p className="px-2 py-6 text-sm text-rose-300">{selectedMemberError}</p>
+                  ) : null}
+                  {!selectedMemberLoading && !selectedMemberError ? (
+                    <HoldingsDonutPanel
+                      items={selectedMemberHoldings}
+                      currentPrices={selectedMemberPrices}
+                      onSelect={(idStock) => navigate(buildGroupStockHref(idStock))}
+                      emptyLabel="This member has no holdings yet."
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </motion.section>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>
         {settingsOpen ? (

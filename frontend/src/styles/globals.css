@@ -142,7 +142,8 @@ body::before {
   transition: opacity 0.25s ease;
 }
 
-.social-glow-card {
+.social-glow-card,
+.group-glow-card {
   position: relative;
   isolation: isolate;
   --glow-x: 50%;
@@ -155,7 +156,8 @@ body::before {
   position: absolute;
 }
 
-.social-glow-card::before {
+.social-glow-card::before,
+.group-glow-card::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -166,7 +168,8 @@ body::before {
   background: radial-gradient(220px circle at var(--glow-x) var(--glow-y), rgba(var(--glow-rgb), 0.22) 0%, rgba(var(--glow-rgb), 0.08) 36%, transparent 68%);
 }
 
-.social-glow-card::after {
+.social-glow-card::after,
+.group-glow-card::after {
   content: '';
   position: absolute;
   inset: 0;

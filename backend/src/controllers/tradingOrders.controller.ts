@@ -351,6 +351,7 @@ export async function getProfileTransactions(req: Request, res: Response): Promi
     where: {
       portafoglio: {
         id_persona,
+        id_gruppo: null,
       },
       created_at: {
         gte: since,

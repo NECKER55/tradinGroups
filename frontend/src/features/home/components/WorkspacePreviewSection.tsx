@@ -26,7 +26,7 @@ import {
 type WorkspaceTab = 'assets' | 'history' | 'watchlist';
 type HistoryPeriodFilter = 'ALL' | '7D' | '30D' | '90D' | '365D';
 type HistoryTypeFilter = 'ALL' | 'Buy' | 'Sell';
-type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed';
+type HistoryStatusFilter = 'ALL' | 'Pending' | 'Executed' | 'Aborted';
 
 function toCurrency(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -725,6 +725,7 @@ export function WorkspacePreviewSection() {
                       <option value="ALL">All</option>
                       <option value="Pending">Pending</option>
                       <option value="Executed">Executed</option>
+                      <option value="Aborted">Aborted</option>
                     </select>
                   </label>
                 </div>
@@ -761,7 +762,7 @@ export function WorkspacePreviewSection() {
                         <td className="px-4 py-3 font-semibold text-slate-100">{tx.id_stock}</td>
                         <td className={`px-4 py-3 font-semibold ${tx.tipo === 'Buy' ? 'text-violet-400' : 'text-rose-400'}`}>{tx.tipo}</td>
                         <td className="px-4 py-3">
-                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${tx.stato === 'Executed' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${tx.stato === 'Executed' ? 'bg-emerald-500/15 text-emerald-300' : tx.stato === 'Pending' ? 'bg-amber-500/15 text-amber-300' : 'bg-rose-500/15 text-rose-300'}`}>
                             {tx.stato}
                           </span>
                         </td>

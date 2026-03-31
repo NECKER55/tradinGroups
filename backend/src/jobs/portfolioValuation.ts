@@ -21,7 +21,9 @@ type SnapshotPending = {
   quantita_azioni: Prisma.Decimal | null;
 };
 
-const DAILY_RUN_HOUR = 8;
+const PRODUCTION_RUN_HOUR = 8;
+const DEVELOPMENT_RUN_HOUR = 0;
+const DEVELOPMENT_RUN_MINUTE = 1;
 let isValuationRunning = false;
 
 export type PortfolioValuationResult = {
@@ -30,8 +32,12 @@ export type PortfolioValuationResult = {
 };
 
 function getNextRunAt(now = new Date()): Date {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const runHour = isProduction ? PRODUCTION_RUN_HOUR : DEVELOPMENT_RUN_HOUR;
+  const runMinute = isProduction ? 0 : DEVELOPMENT_RUN_MINUTE;
+
   const next = new Date(now);
-  next.setHours(DAILY_RUN_HOUR, 0, 0, 0);
+  next.setHours(runHour, runMinute, 0, 0);
 
   if (next <= now) {
     next.setDate(next.getDate() + 1);

@@ -252,5 +252,5 @@ enum TransazioneTipo {
 enum TransazioneStato {
   Pending
   Executed
-  Failed
+  Aborted
 }

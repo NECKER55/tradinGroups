@@ -29,7 +29,7 @@ export interface TransactionItem {
   id_portafoglio: number;
   id_stock: string;
   tipo: 'Buy' | 'Sell';
-  stato: 'Pending' | 'Executed';
+  stato: 'Pending' | 'Executed' | 'Aborted';
   prezzo_esecuzione: string;
   importo_investito: string | null;
   quantita_azioni: string | null;

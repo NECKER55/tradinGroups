@@ -1411,9 +1411,6 @@ export function SocialHubPage() {
                         <p className="text-[11px] uppercase tracking-wide text-emerald-300">Friend connected</p>
                       </div>
                     </div>
-                    <button className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-violet-200 transition-all duration-300 hover:bg-violet-500/20">
-                      Message
-                    </button>
                   </article>
                 ))
               )}

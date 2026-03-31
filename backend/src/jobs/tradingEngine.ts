@@ -103,6 +103,16 @@ export async function processPendingOrders(): Promise<ProcessPendingOrdersResult
     for (const order of pendingOrders) {
       const currentPrice = quotes.get(order.id_stock);
       if (!currentPrice || currentPrice <= 0) {
+        await prisma.transazione.updateMany({
+          where: {
+            id_transazione: order.id_transazione,
+            stato: 'Pending',
+          },
+          data: {
+            stato: 'Aborted',
+            approved_at: new Date(),
+          },
+        });
         continue;
       }
 
