@@ -1040,7 +1040,7 @@ export function SocialHubPage() {
         <div className="w-12" />
       </div>
 
-      <div className="relative rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
+      <div data-tutorial-id="social-search-panel" className="relative rounded-2xl border border-[#1f1f2e] bg-[#13131a] p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative w-full max-w-3xl">
             <div className="absolute inset-0 rounded-xl bg-violet-500/15 blur-xl" />
@@ -1076,7 +1076,7 @@ export function SocialHubPage() {
             </div>
           </div>
 
-          <div className="relative flex items-center gap-3">
+          <div data-tutorial-id="social-actions-panel" className="relative flex items-center gap-3">
             <button
               ref={requestsButtonRef}
               onClick={() => {
@@ -1392,7 +1392,7 @@ export function SocialHubPage() {
 
       {!loading ? (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-          <section className="space-y-4 lg:col-span-5">
+          <section data-tutorial-id="social-connections" className="space-y-4 lg:col-span-5">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">My Connections <span className="text-sm font-normal text-slate-500">({friends.length})</span></h2>
             </div>
@@ -1420,7 +1420,7 @@ export function SocialHubPage() {
             </div>
           </section>
 
-          <section className="space-y-4 lg:col-span-7">
+          <section data-tutorial-id="social-squads" className="space-y-4 lg:col-span-7">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold">Trading Squads <span className="text-sm font-normal text-slate-500">({myGroups.length})</span></h2>
             </div>

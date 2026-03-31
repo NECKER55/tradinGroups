@@ -6,6 +6,7 @@ import { SocialHubPage } from '../features/social/pages/SocialHubPage';
 import { StockDetailPage } from '../features/stocks/pages/StockDetailPage';
 import { GroupDetailPage } from '../features/groups/pages/GroupDetailPage';
 import { AdminDashboardPage } from '../features/admin/pages/AdminDashboardPage';
+import { TutorialMockGroupPage } from '../features/tutorial/pages/TutorialMockGroupPage';
 import { ProtectedRoute } from '../routes/ProtectedRoute';
 import { MainLayout } from '../shared/layout/MainLayout';
 
@@ -17,6 +18,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'register', element: <RegisterPage /> },
+      { path: 'tutorial/mock-group', element: <TutorialMockGroupPage /> },
       {
         element: <ProtectedRoute />,
         children: [

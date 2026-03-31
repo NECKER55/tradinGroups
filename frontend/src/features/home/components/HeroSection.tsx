@@ -6,7 +6,7 @@ type HeroSectionProps = {
 
 export function HeroSection({ searchTerm, onSearchTermChange, searchLoading }: HeroSectionProps) {
   return (
-    <section className="mx-auto max-w-7xl px-6 py-12">
+    <section data-tutorial-id="home-find-squads" className="mx-auto max-w-7xl px-6 py-12">
       <div className="violet-underlight mb-12 flex flex-col items-center gap-6 text-center animate-rise-in">
         <h1 className="text-4xl font-black tracking-tight text-canvas md:text-6xl">
           <span className="text-white">Trading</span><span className="text-signal">IQ</span>

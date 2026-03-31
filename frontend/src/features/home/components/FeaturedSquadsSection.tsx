@@ -188,7 +188,7 @@ export function FeaturedSquadsSection({ searchTerm, searchLoading, searchError, 
   const centeredLayout = queryActive && cards.length > 0 && cards.length < 3;
 
   return (
-    <section className="mx-auto max-w-7xl px-6 py-8">
+    <section data-tutorial-id="home-featured-squads" className="mx-auto max-w-7xl px-6 py-8">
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <h2 className="flex items-center gap-3 text-2xl font-bold">

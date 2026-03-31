@@ -377,14 +377,14 @@ export function WorkspacePreviewSection() {
   if (!isAuthenticated) return null;
 
   return (
-    <section id="private-area" className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-8">
+    <section id="private-area" data-tutorial-id="home-private-area-overview" className="mx-auto w-full max-w-[1200px] space-y-8 px-6 py-8">
       <div className="flex items-center gap-4">
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
         <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-violet-300/80">Personal Workspace</span>
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2a2a39] to-transparent" />
       </div>
 
-      <div className="home-glow-card relative w-full overflow-hidden rounded-2xl border border-[#232337] bg-[#11131f]/88 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.38)] backdrop-blur-sm">
+      <div data-tutorial-id="home-private-search-bar" className="home-glow-card relative w-full overflow-hidden rounded-2xl border border-[#232337] bg-[#11131f]/88 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.38)] backdrop-blur-sm">
         <div className="pointer-events-none absolute -left-12 -top-16 h-40 w-40 rounded-full bg-violet-500/14 blur-3xl" />
         <div className="pointer-events-none absolute -right-16 -bottom-16 h-44 w-44 rounded-full bg-fuchsia-500/10 blur-3xl" />
         <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(120%_80%_at_10%_0%,rgba(139,92,246,0.16),transparent_58%)]" />
@@ -622,7 +622,9 @@ export function WorkspacePreviewSection() {
         document.body,
       ) : null}
 
-      <PortfolioPerformanceChart history={history} title="Portfolio Performance" />
+      <div data-tutorial-id="home-private-portfolio-chart">
+        <PortfolioPerformanceChart history={history} title="Portfolio Performance" />
+      </div>
 
       <div className="space-y-4">
         <div className="inline-flex space-x-1 rounded-full border border-violet-500/25 bg-[#0d0d14] p-1">
@@ -633,6 +635,13 @@ export function WorkspacePreviewSection() {
           ].map((tab) => (
             <button
               key={tab.id}
+              data-tutorial-id={
+                tab.id === 'assets'
+                  ? 'home-private-tab-assets'
+                  : tab.id === 'history'
+                    ? 'home-private-tab-history'
+                    : 'home-private-tab-watchlist'
+              }
               onClick={() => setActiveTab(tab.id)}
               className={`${activeTab === tab.id ? '' : 'text-slate-300 hover:text-slate-100'} relative rounded-full px-4 py-2 text-sm font-medium text-white outline-sky-400 transition focus-visible:outline-2`}
               style={{ WebkitTapHighlightColor: 'transparent' }}

@@ -32,6 +32,9 @@ export function RegisterPage() {
         password,
         confirm_password: confirmPassword,
       });
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('tradingiq_tutorial_autostart', '1');
+      }
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
