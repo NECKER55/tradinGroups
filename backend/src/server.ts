@@ -11,8 +11,10 @@ import router from './routes';
 import { errorHandler } from './middleware/errorHandler';
 import { startCronJobs } from './jobs/tradingEngine';
 import { startDailyPortfolioValuationJob } from './jobs/portfolioValuation';
+import { prisma } from './lib/prisma';
 
-const app  = express();
+const app = express();
+
 // Fondamentale per Render e per express-rate-limit
 app.set('trust proxy', 1);
 const PORT = parseInt(process.env.PORT ?? '3000');
@@ -95,7 +97,7 @@ app.use(readLimiter);
 app.use(writeLimiter);
 
 // Rate limiting più stretto per gli endpoint di auth
-app.use('/api/auth/login',    rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));
+app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));
 app.use('/api/auth/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 5 }));
 
 // ─── Parsing ──────────────────────────────────────────────────
@@ -122,7 +124,7 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ─── Avvio ────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🚀 Server avviato su http://localhost:${PORT}`);
   console.log(`   Ambiente: ${process.env.NODE_ENV ?? 'development'}\n`);
 
@@ -133,5 +135,52 @@ app.listen(PORT, () => {
     startDailyPortfolioValuationJob();
   }
 });
+
+const gracefulShutdown = (() => {
+  let shutdownInitiated = false;
+  let timeout;
+
+  return (signal: string) => {
+    console.log(`\n♻️ Ricevuto ${signal}`);
+
+    if (shutdownInitiated) {
+      console.warn('⚠️ Shutdown già in corso.');
+      return;
+    }
+    shutdownInitiated = true;
+
+    // 1. Fermiamo il server (smette di accettare nuove connessioni)
+    server.close(async (err) => {
+      console.log('✅ Server HTTP chiuso.');
+      if (err) {
+        console.error('❌ Errore durante la chiusura del server:', err);
+      }
+
+      try {
+        // 2. Chiudiamo il database solo DOPO che il server è fermo
+        await prisma.$disconnect();
+        console.log('🐘 Database disconnesso.');
+
+        // 3. Ora possiamo uscire
+        process.exit(0);
+      } catch (err) {
+        console.error('❌ Errore durante il disconnect:', err);
+        process.exit(1);
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+
+    // Forza la chiusura dopo 10 secondi se il server è "appeso"
+    timeout = setTimeout(() => {
+      console.error('⚠️ Chiusura forzata: il server non si è chiuso in tempo.');
+      process.exit(1);
+    }, 10_000);
+  }
+})();
+
+// Ascolta i segnali di Render/OS
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 export default app;

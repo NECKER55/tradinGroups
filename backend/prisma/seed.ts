@@ -2,10 +2,9 @@
 // Popola il DB con dati di esempio per sviluppo/test.
 // Esegui con: npx prisma db seed
 
-import { PrismaClient, RuoloGruppo, GruppoPrivacy, TransazioneTipo, TransazioneStato } from '@prisma/client';
+import { RuoloGruppo, GruppoPrivacy, TransazioneTipo, TransazioneStato } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
+import { prisma } from '../src/lib/prisma';
 
 async function main() {
   console.log('🌱 Avvio seed...');
