@@ -1,32 +1,32 @@
 // src/server.ts
-import 'dotenv/config';
-import express from 'express';
-import helmet from 'helmet';
-import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
+import "dotenv/config";
+import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import morgan from "morgan";
+import rateLimit from "express-rate-limit";
 
-import router from './routes';
-import { errorHandler } from './middleware/errorHandler';
-import { startCronJobs } from './jobs/tradingEngine';
-import { startDailyPortfolioValuationJob } from './jobs/portfolioValuation';
-import { prisma } from './lib/prisma';
+import router from "./routes";
+import { errorHandler } from "./middleware/errorHandler";
+import { startCronJobs } from "./jobs/tradingEngine";
+import { startDailyPortfolioValuationJob } from "./jobs/portfolioValuation";
+import { prisma } from "./lib/prisma";
 
 const app = express();
 
 // Fondamentale per Render e per express-rate-limit
-app.set('trust proxy', 1);
-const PORT = parseInt(process.env.PORT ?? '3000');
+app.set("trust proxy", 1);
+const PORT = parseInt(process.env.PORT ?? "3000");
 
 const allowedOrigins = new Set(
   [
     process.env.FRONTEND_URL,
-    ...(process.env.FRONTEND_URLS ?? '').split(','),
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:4173',
-    'http://127.0.0.1:4173',
+    ...(process.env.FRONTEND_URLS ?? "").split(","),
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
   ]
     .map((origin) => origin?.trim())
     .filter((origin): origin is string => Boolean(origin)),
@@ -41,38 +41,59 @@ const corsOptions: cors.CorsOptions = {
     callback(new Error(`CORS_ORIGIN_NOT_ALLOWED:${origin}`));
   },
   credentials: true,
-  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
   optionsSuccessStatus: 204,
 };
 
 // ─── Security ─────────────────────────────────────────────────
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      baseUri: ["'self'"],
-      fontSrc: ["'self'", 'https:', 'data:'],
-      formAction: ["'self'"],
-      frameAncestors: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      objectSrc: ["'none'"],
-      scriptSrc: ["'self'", 'https:', "'unsafe-inline'", "'unsafe-eval'", 'https://s3.tradingview.com', 'https://*.tradingview.com', 'https://www.tradingview.com'],
-      scriptSrcAttr: ["'none'"],
-      styleSrc: ["'self'", 'https:', "'unsafe-inline'"],
-      connectSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview-widget.com', 'wss://*.tradingview.com'],
-      frameSrc: ["'self'", 'https://*.tradingview.com', 'https://www.tradingview.com', 'https://www.tradingview-widget.com', 'https://*.tradingview-widget.com'],
-      upgradeInsecureRequests: [],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        fontSrc: ["'self'", "https:", "data:"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        objectSrc: ["'none'"],
+        scriptSrc: [
+          "'self'",
+          "https:",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          "https://s3.tradingview.com",
+          "https://*.tradingview.com",
+          "https://www.tradingview.com",
+        ],
+        scriptSrcAttr: ["'none'"],
+        styleSrc: ["'self'", "https:", "'unsafe-inline'"],
+        connectSrc: [
+          "'self'",
+          "https://*.tradingview.com",
+          "https://www.tradingview-widget.com",
+          "wss://*.tradingview.com",
+        ],
+        frameSrc: [
+          "'self'",
+          "https://*.tradingview.com",
+          "https://www.tradingview.com",
+          "https://www.tradingview-widget.com",
+          "https://*.tradingview-widget.com",
+        ],
+        upgradeInsecureRequests: [],
+      },
     },
-  },
-}));
+  }),
+);
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 // ─── Rate limiting globale ────────────────────────────────────
 const methodAwareRateLimitMessage = {
-  error: 'TOO_MANY_REQUESTS',
-  message: 'Troppe richieste. Riprova tra poco.',
+  error: "TOO_MANY_REQUESTS",
+  message: "Troppe richieste. Riprova tra poco.",
 };
 
 const readLimiter = rateLimit({
@@ -81,7 +102,7 @@ const readLimiter = rateLimit({
   message: methodAwareRateLimitMessage,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => !['GET', 'HEAD'].includes(req.method),
+  skip: (req) => !["GET", "HEAD"].includes(req.method),
 });
 
 const writeLimiter = rateLimit({
@@ -90,50 +111,68 @@ const writeLimiter = rateLimit({
   message: methodAwareRateLimitMessage,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/api/jobs/'), // Escludi jobs da rate limit globale, hanno limiti specifici più stretti
+  skip: (req) =>
+    ["GET", "HEAD", "OPTIONS"].includes(req.method) ||
+    req.path.startsWith("/api/jobs/"), // Escludi jobs da rate limit globale, hanno limiti specifici più stretti
 });
 
 app.use(readLimiter);
 app.use(writeLimiter);
 
 // Rate limiting più stretto per gli endpoint di auth
-app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));
-app.use('/api/auth/register', rateLimit({ windowMs: 60 * 60 * 1000, max: 5 }));
+app.use("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }));
+app.use("/api/auth/register", rateLimit({ windowMs: 60 * 60 * 1000, max: 5 }));
 
 // ─── Parsing ──────────────────────────────────────────────────
 app.use(express.json());
 app.use(cookieParser());
 
 // ─── Logging ──────────────────────────────────────────────────
-if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+if (process.env.NODE_ENV !== "test") {
+  app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 }
 
 // ─── Healthcheck ──────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get("/health", (_req, res) =>
+  res.json({ status: "ok", timestamp: new Date().toISOString() }),
+);
 
 // ─── API Routes ───────────────────────────────────────────────
-app.use('/api', router);
+app.use("/api", router);
 
 // ─── 404 catch-all ────────────────────────────────────────────
 app.use((_req, res) => {
-  res.status(404).json({ error: 'NOT_FOUND', message: 'Endpoint non trovato.' });
+  res
+    .status(404)
+    .json({ error: "NOT_FOUND", message: "Endpoint non trovato." });
 });
 
 // ─── Global error handler ─────────────────────────────────────
 app.use(errorHandler);
 
+let interval;
+
 // ─── Avvio ────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
   console.log(`\n🚀 Server avviato su http://localhost:${PORT}`);
-  console.log(`   Ambiente: ${process.env.NODE_ENV ?? 'development'}\n`);
+  console.log(`   Ambiente: ${process.env.NODE_ENV ?? "development"}\n`);
 
-  // In produzione i job vengono invocati da endpoint sicuri (/api/jobs/*).
+  // In produzione i job vengono invocati da endpoint sicuri /api/jobs/*.
   // L'esecuzione automatica rimane disponibile solo in ambienti non-prod quando esplicitamente abilitata.
-  if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_CRON === 'true') {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    process.env.ENABLE_CRON === "true"
+  ) {
     startCronJobs();
     startDailyPortfolioValuationJob();
   }
+
+  interval = setInterval(
+    () => {
+      console.log("⏰ Keep-alive ping per prevenire idle timeout");
+    },
+    2.5 * 60 * 1_000,
+  ); // log ogni 2 minuti e mezzo per evitare che Render "uccida" l'istanza per inattività
 });
 
 const gracefulShutdown = (() => {
@@ -144,27 +183,29 @@ const gracefulShutdown = (() => {
     console.log(`\n♻️ Ricevuto ${signal}`);
 
     if (shutdownInitiated) {
-      console.warn('⚠️ Shutdown già in corso.');
+      console.warn("⚠️ Shutdown già in corso.");
       return;
     }
     shutdownInitiated = true;
 
+    clearInterval(interval); // Ferma il keep-alive log
+
     // 1. Fermiamo il server (smette di accettare nuove connessioni)
     server.close(async (err) => {
-      console.log('✅ Server HTTP chiuso.');
+      console.log("✅ Server HTTP chiuso.");
       if (err) {
-        console.error('❌ Errore durante la chiusura del server:', err);
+        console.error("❌ Errore durante la chiusura del server:", err);
       }
 
       try {
         // 2. Chiudiamo il database solo DOPO che il server è fermo
         await prisma.$disconnect();
-        console.log('🐘 Database disconnesso.');
+        console.log("🐘 Database disconnesso.");
 
         // 3. Ora possiamo uscire
         process.exit(0);
       } catch (err) {
-        console.error('❌ Errore durante il disconnect:', err);
+        console.error("❌ Errore durante il disconnect:", err);
         process.exit(1);
       } finally {
         clearTimeout(timeout);
@@ -173,14 +214,14 @@ const gracefulShutdown = (() => {
 
     // Forza la chiusura dopo 10 secondi se il server è "appeso"
     timeout = setTimeout(() => {
-      console.error('⚠️ Chiusura forzata: il server non si è chiuso in tempo.');
+      console.error("⚠️ Chiusura forzata: il server non si è chiuso in tempo.");
       process.exit(1);
     }, 10_000);
-  }
+  };
 })();
 
 // Ascolta i segnali di Render/OS
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 export default app;
